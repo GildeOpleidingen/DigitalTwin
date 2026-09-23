@@ -10,7 +10,7 @@
    INSTALLATIE (eenmalig, op de pc die aan de robot hangt):
      1. Installeer Node.js (nodejs.org, LTS-versie).
      2. Open een terminal in deze map en voer uit:
-          npm install ws
+          npm install ws modbus-serial
      3. Pas hieronder ROBOT_IP aan (zie teach pendant:
         Instellingen → Systeem → Netwerk).
 
@@ -23,9 +23,18 @@
    NETWERK (directe ethernetkabel):
      Geef de robot en de pc een vast IP in hetzelfde subnet,
      robot 192.168.1.100 / pc bijv. 192.168.1.20, masker 255.255.255.0.
+
+   OP AFSTAND BEREIKBAAR MAKEN (wss:// direct vanuit dit script):
+     Zet een certificaat en sleutel naast dit bestand als cert.pem
+     en key.pem (of geef andere paden mee via de omgevingsvariabelen
+     TLS_CERT en TLS_KEY). Staan die er, dan start de bridge zelf al
+     beveiligd op wss://; ontbreken ze, dan draait hij gewoon zoals
+     altijd op onbeveiligd ws:// (prima voor lokaal testen).
    ============================================================ */
 
 const net = require("net");
+const fs = require("fs");
+const https = require("https");
 const WebSocket = require("ws");
 
 /* ------------------ INSTELLINGEN ------------------ */
@@ -36,11 +45,29 @@ const RT_POORT   = 30003;            // realtime interface (uitlezen, 125 Hz)
 const CMD_POORT  = 30002;            // secondary interface (URScript sturen)
 const WS_POORT   = 9090;             // poort waarop de twin verbindt
 const ZEND_HZ    = 15;               // hoe vaak joints naar de twin gaan
+const TLS_CERT   = process.env.TLS_CERT || "cert.pem";
+const TLS_KEY    = process.env.TLS_KEY  || "key.pem";
 /* --------------------------------------------------- */
 
-/* WebSocket-server voor de twin(s) */
-const wss = new WebSocket.Server({ port: WS_POORT });
-console.log(`[bridge] WebSocket-server actief op ws://localhost:${WS_POORT}`);
+/* WebSocket-server voor de twin(s) — automatisch wss:// als er een
+   certificaat + sleutel klaarstaan, anders gewoon ws:// zoals altijd. */
+let wss;
+const heeftCertificaat = fs.existsSync(TLS_CERT) && fs.existsSync(TLS_KEY);
+if (heeftCertificaat) {
+  const httpsServer = https.createServer({
+    cert: fs.readFileSync(TLS_CERT),
+    key:  fs.readFileSync(TLS_KEY),
+  });
+  wss = new WebSocket.Server({ server: httpsServer });
+  httpsServer.listen(WS_POORT, () => {
+    console.log(`[bridge] beveiligde WebSocket-server actief op wss://<dit-adres>:${WS_POORT}`);
+  });
+  httpsServer.on("error", err => console.log(`[bridge] kon niet starten op poort ${WS_POORT}: ${err.message}`));
+} else {
+  wss = new WebSocket.Server({ port: WS_POORT });
+  console.log(`[bridge] WebSocket-server actief op ws://localhost:${WS_POORT}`);
+  console.log(`[bridge] (onbeveiligd — leg ${TLS_CERT} en ${TLS_KEY} naast dit bestand voor wss://)`);
+}
 console.log(`[bridge] robot-IP: ${ROBOT_IP}  (wijzigen: node ur5-bridge.js <ip>)`);
 
 function broadcast(obj) {
@@ -105,6 +132,86 @@ function stuurURScript(script) {
     console.log(`[robot] versturen mislukt: ${err.message}`);
     broadcast({ type: "error", message: "URScript versturen mislukt: " + err.message });
   });
+}
+
+/* ------------------ Grijper: Modbus TCP naar de OnRobot Compute/Eye Box ------------------
+   Rechtstreekse aansturing, buiten de robot en pendant om — geen .urp-
+   bestanden, geen popups, geen laad/afspeel-vertraging. Geeft ook de
+   ECHTE grijperstatus terug in plaats van een gok in de twin.
+   Registerkaart (Modbus TCP, poort 502, unit-id 65), bevestigd werkend
+   op de RG2:
+     schrijven  0 = doelkracht (1/10 N)         1 = doelbreedte (1/10 mm)
+                2 = commando (1=grip, 8=stop, 16=grip met fingertip-offset)
+     lezen    267 = werkelijke breedte (1/10 mm)
+              268 = status: bit0 bezig, bit1 grip gedetecteerd,
+                    bit2/3 S1 ingedrukt/getriggerd, bit4/5 S2 idem,
+                    bit6 veiligheidsfout                                */
+const ModbusRTU = require("modbus-serial");
+const GRIJPER_IP = process.env.GRIJPER_IP || "192.168.1.1";
+const GRIJPER_POORT = +(process.env.GRIJPER_POORT || 502);
+const GRIJPER_UNIT = 65;
+const GRIJPER_MECHANISCH_MAX = 1100;   // RG2 = 1100 (110,0 mm); voor een RG6 is dit 1600 — puur de fysieke grens
+const GRIJPER_OPEN_BREEDTE = +(process.env.GRIJPER_OPEN_MM ? process.env.GRIJPER_OPEN_MM * 10 : 1050);
+/* Standaard net iets onder het mechanische maximum (105,0 i.p.v. 110,0 mm) —
+   helemaal tot de fysieke aanslag sturen geeft soms een klein "terugveer"-
+   correctiebewegingetje van de motor zelf. Andere waarde nodig? Start de
+   bridge met bijv. GRIJPER_OPEN_MM=100 node ur5-bridge.js                */
+const GRIJPER_MAX_KRACHT  = 400;    // RG2 = 400 (40,0 N); voor een RG6 wordt dit 1200
+const modbusClient = new ModbusRTU();
+let grijperVerbonden = false;
+
+async function zorgVoorGrijperVerbinding() {
+  if (grijperVerbonden) return;
+  await modbusClient.connectTCP(GRIJPER_IP, { port: GRIJPER_POORT });
+  modbusClient.setID(GRIJPER_UNIT);
+  modbusClient.setTimeout(2000);
+  grijperVerbonden = true;
+  console.log(`[grijper] Modbus-verbinding actief met ${GRIJPER_IP}:${GRIJPER_POORT}`);
+}
+
+async function leesGrijperStatus() {
+  await zorgVoorGrijperVerbinding();
+  const statusRes = await modbusClient.readHoldingRegisters(268, 1);
+  const breedteRes = await modbusClient.readHoldingRegisters(267, 1);
+  const status = statusRes.data[0];
+  return {
+    bezig: !!(status & 0b0000001),
+    gripGedetecteerd: !!(status & 0b0000010),
+    s1Getriggerd: !!(status & 0b0001000),      // bit3: tijdens beweging tegen iets aangelopen
+    s2Getriggerd: !!(status & 0b0100000),      // bit5: idem, andere schakelaar
+    foutBijInschakelen: !!(status & 0b1000000), // bit6: stond al ingedrukt bij het aanzetten van de grijper
+    veiligheidsfout: !!(status & 0b1101000),
+    breedteMM: breedteRes.data[0] / 10,
+  };
+}
+
+async function stuurGrijperCommando(open, krachtN) {
+  await zorgVoorGrijperVerbinding();
+  const kracht10 = Number.isFinite(krachtN)
+    ? Math.max(0, Math.min(GRIJPER_MAX_KRACHT, Math.round(krachtN * 10)))
+    : GRIJPER_MAX_KRACHT;
+  const breedte10 = open ? GRIJPER_OPEN_BREEDTE : 0;
+  await modbusClient.writeRegisters(0, [kracht10, breedte10, 16]);   // 16 = grip met fingertip-offset
+}
+
+async function wachtTotGrijperKlaar(timeoutMs = 8000) {
+  const start = Date.now();
+  await new Promise(r => setTimeout(r, 150));   // even ruimte om "bezig" te laten inzetten
+  while (Date.now() - start < timeoutMs) {
+    if (programmaAfbreken) throw new Error("afgebroken door gebruiker");
+    const status = await leesGrijperStatus();
+    if (status.veiligheidsfout){
+      const reden = status.foutBijInschakelen
+        ? "een schakelaar stond al ingedrukt toen de grijper werd ingeschakeld (niet per se nu ontstaan)"
+        : status.s1Getriggerd && status.s2Getriggerd ? "beide veiligheidsschakelaars (S1 én S2) geactiveerd tijdens een beweging"
+        : status.s1Getriggerd ? "veiligheidsschakelaar S1 geactiveerd tijdens een beweging"
+        : "veiligheidsschakelaar S2 geactiveerd tijdens een beweging";
+      throw new Error("grijper-veiligheidsschakelaar geactiveerd (" + reden + ") — reset vereist stroom uit/aan van de grijper");
+    }
+    if (!status.bezig) return status;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error("time-out: grijper bleef bezig");
 }
 
 /* ------------------ Dashboard: poort 29999 ------------------
@@ -199,16 +306,55 @@ const FREEDRIVE_UIT =
 let programmaBezig = false;
 let programmaAfbreken = false;
 
-async function wachtTotRobotKlaar(timeoutMs = 30000) {
-  await new Promise(r => setTimeout(r, 350));      // even ruimte om de vorige start te laten inzetten
+async function wachtTotRobotKlaar(timeoutMs = 30000, opts = {}) {
+  const { verifieerStart = false, startTimeoutMs = 9000 } = opts;
+  /* OnRobot-apparaten (Eye/Compute Box) melden zich pas na het starten van
+     een programma — dat kan volgens de UR-handleiding tot 5 s duren. Deze
+     tijd moet daar ruim boven zitten, anders meldt de bridge "niet gestart"
+     terwijl de grijper alleen nog maar even traag opstartte.              */
+  if (verifieerStart) {
+    /* Actief controleren dat de robot ook ECHT begonnen is, niet alleen
+       aannemen dat hij klaar is — anders lijkt een stil mislukte start
+       (load/play die geen effect had) precies op een geslaagde, razend-
+       snelle uitvoering. Dat is exact wat "stap lijkt overgeslagen"
+       veroorzaakt: running staat de hele tijd al op false.            */
+    const t0 = Date.now();
+    let gestart = false;
+    while (Date.now() - t0 < startTimeoutMs) {
+      if (programmaAfbreken) throw new Error("afgebroken door gebruiker");
+      const antwoord = await dashboardVraag("running");
+      if (/true/i.test(antwoord)) { gestart = true; break; }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    if (!gestart) {
+      throw new Error(
+        "programma is niet gestart — robot bleef 'running: false'. " +
+        "Controleer: staat de robot op Remote (niet Local)? Staat de " +
+        "schakelaar rechtsonder op Real Robot (niet Simulation)? Zijn " +
+        "de remmen los?"
+      );
+    }
+  } else {
+    await new Promise(r => setTimeout(r, 350));      // even ruimte om de vorige start te laten inzetten
+  }
   const start = Date.now();
+  let laatstePopupPoging = 0;
   while (Date.now() - start < timeoutMs) {
     if (programmaAfbreken) throw new Error("afgebroken door gebruiker");
     const antwoord = await dashboardVraag("running");
     if (/false/i.test(antwoord)) return;
+    /* Een popup op de pendant (bijv. van de OnRobot-URCap na een grijpactie)
+       kan het programma laten "hangen" zonder dat running ooit false wordt.
+       Elke ~1,5 s proberen we 'm zelf weg te klikken — onschuldig als er
+       toch geen popup open staat, dan gebeurt er simpelweg niets.         */
+    const nu = Date.now();
+    if (nu - start > 1500 && nu - laatstePopupPoging > 1500) {
+      laatstePopupPoging = nu;
+      await dashboardVraag("close popup").catch(() => {});
+    }
     await new Promise(r => setTimeout(r, 250));
   }
-  throw new Error("time-out: robot bleef bezig");
+  throw new Error("time-out: robot bleef bezig (mogelijk een popup op de pendant die niet wegging)");
 }
 
 async function speelProgrammaAf(stappen) {
@@ -223,11 +369,21 @@ async function speelProgrammaAf(stappen) {
         stuurURScript(stap.script);
         await wachtTotRobotKlaar();
       } else if (stap.soort === "grip") {
-        const laadAntwoord = await dashboardVraag("load " + stap.programma);
-        if (/error|kan niet|not found|file not found/i.test(laadAntwoord))
-          throw new Error("laden mislukt (" + laadAntwoord + ") — bestaat " + stap.programma + " in /programs?");
-        await dashboardVraag("play");
-        await wachtTotRobotKlaar();
+        if (typeof stap.open === "boolean") {
+          await stuurGrijperCommando(stap.open, stap.kracht);
+          const status = await wachtTotGrijperKlaar();
+          broadcast({ type: "grijperstatus", ...status, open: stap.open });
+        } else if (stap.programma) {
+          /* oude .urp-route — alleen nog voor programma's die van vóór de
+             Modbus-aansturing zijn opgeslagen.                          */
+          const laadAntwoord = await dashboardVraag("load " + stap.programma);
+          if (/error|kan niet|not found|file not found/i.test(laadAntwoord))
+            throw new Error("laden mislukt (" + laadAntwoord + ") — bestaat " + stap.programma + " in /programs?");
+          const speelAntwoord = await dashboardVraag("play");
+          if (/error|fail|could not|cannot/i.test(speelAntwoord))
+            throw new Error("afspelen mislukt (" + speelAntwoord + ")");
+          await wachtTotRobotKlaar(30000, { verifieerStart: true });
+        }
       }
     } catch (err) {
       console.log(`[programma] gestopt bij stap ${i + 1}: ${err.message}`);
@@ -333,6 +489,20 @@ wss.on("connection", ws => {
       programmaAfbreken = true;
       stuurDashboard("stop");
       console.log("[programma] stopcommando ontvangen");
+    }
+    if (msg.type === "grijperCommando" && typeof msg.open === "boolean") {
+      stuurGrijperCommando(msg.open, msg.kracht)
+        .then(() => wachtTotGrijperKlaar())
+        .then(status => broadcast({ type: "grijperstatus", ...status, open: msg.open }))
+        .catch(err => {
+          console.log(`[grijper] fout: ${err.message}`);
+          broadcast({ type: "error", message: "Grijper: " + err.message });
+        });
+    }
+    if (msg.type === "grijperStatus") {
+      leesGrijperStatus()
+        .then(status => ws.send(JSON.stringify({ type: "grijperstatus", ...status })))
+        .catch(err => ws.send(JSON.stringify({ type: "error", message: "Grijperstatus lezen mislukt: " + err.message })));
     }
   });
   ws.on("close", () => console.log("[twin] verbinding gesloten"));

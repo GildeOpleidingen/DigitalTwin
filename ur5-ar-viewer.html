@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>UR5e AR-viewer — HoloLens 2</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{ --bg:#0d1117; --panel:#161b22; --line:#2a3038; --text:#e6edf3; --muted:#8b98a5; --ok:#3fb950; --err:#f85149; --accent:#58a6ff; }
+  *{box-sizing:border-box;}
+  html,body{margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,Segoe UI,Arial,sans-serif;}
+  #ui{
+    position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:14px; padding:24px; text-align:center;
+  }
+  h1{font-size:20px; font-weight:600; margin:0;}
+  p{color:var(--muted); font-size:14px; line-height:1.6; max-width:440px; margin:0;}
+  #status{
+    font-family:'Consolas',monospace; font-size:13px; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; padding:12px 16px; max-width:440px;
+    white-space:pre-wrap; text-align:left;
+  }
+  .err{color:var(--err);}
+  input{
+    background:var(--panel); border:1px solid var(--line); color:var(--text);
+    border-radius:6px; padding:8px 12px; font-family:Consolas,monospace; font-size:13px; width:280px;
+  }
+  button{
+    background:var(--accent); color:#04101f; border:none; border-radius:8px;
+    padding:12px 28px; font-size:15px; font-weight:600; cursor:pointer;
+  }
+  button.klein{ padding:8px 16px; font-size:13px; }
+  button:disabled{opacity:0.4; cursor:default;}
+  #exitBtn{
+    position:fixed; top:16px; right:16px; z-index:10; display:none;
+    background:var(--panel); color:var(--text); border:1px solid var(--line);
+  }
+  canvas{position:fixed; inset:0; display:block;}
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <h1>UR5e AR-viewer</h1>
+  <p>Verbindt met de bridge en toont de live robotstand als een 3D-staafpoppetje in de echte ruimte. Knijp (air-tap-en-vasthouden) bij de voet van het poppetje om het te verslepen naar de echte robotpositie.</p>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <input id="bridgeAdres" placeholder="wss://adres-van-de-vaste-laptop:9090" spellcheck="false">
+    <button class="klein" id="verbindBtn">Verbind</button>
+  </div>
+  <div id="status">nog niet gecontroleerd…</div>
+  <button id="startBtn" disabled>AR starten</button>
+</div>
+<button id="exitBtn">AR verlaten</button>
+
+<script>
+"use strict";
+const statusEl = document.getElementById("status");
+const startBtn = document.getElementById("startBtn");
+const exitBtn = document.getElementById("exitBtn");
+const bridgeAdresVeld = document.getElementById("bridgeAdres");
+const verbindBtn = document.getElementById("verbindBtn");
+
+bridgeAdresVeld.value = localStorage.getItem("ar_bridge_adres") || "";
+
+function zetStatus(regels, isFout){
+  statusEl.innerHTML = regels.map(r => "<div>" + r + "</div>").join("");
+  statusEl.className = isFout ? "err" : "";
+}
+
+let arOndersteund = false;
+(async function checkOndersteuning(){
+  if(!("xr" in navigator)){ zetStatus(["✗ navigator.xr bestaat niet."], true); return; }
+  try{
+    arOndersteund = await navigator.xr.isSessionSupported("immersive-ar");
+    zetStatus([arOndersteund ? "✓ immersive-ar wordt ondersteund." : "✗ immersive-ar wordt niet ondersteund."], !arOndersteund);
+    startBtn.disabled = !arOndersteund;
+  } catch(err){
+    zetStatus(["✗ Fout bij het checken: " + err.message], true);
+  }
+})();
+
+/* ------------------ Verbinding met de bridge ------------------ */
+let ws = null;
+let q = [0,-90,0,-90,0,0];        // laatst bekende gewrichtshoeken (graden) — Home als startwaarde
+let nieuweBridgePose = false;     // wordt alleen true als er ECHT een nieuw bericht binnenkomt
+let bridgeStatusTekst = "nog niet verbonden";
+
+function verbindMetBridge(){
+  const adres = bridgeAdresVeld.value.trim();
+  if(!adres) return;
+  localStorage.setItem("ar_bridge_adres", adres);
+  if(ws) ws.close();
+  bridgeStatusTekst = "verbinden …";
+  try{ ws = new WebSocket(adres); }
+  catch(err){ bridgeStatusTekst = "ongeldig adres: " + err.message; return; }
+  ws.onopen = () => { bridgeStatusTekst = "verbonden"; };
+  ws.onclose = () => { bridgeStatusTekst = "verbinding verbroken"; };
+  ws.onerror = () => { bridgeStatusTekst = "verbindingsfout"; };
+  ws.onmessage = ev => {
+    let msg; try{ msg = JSON.parse(ev.data); } catch{ return; }
+    if(msg.type === "joints" && Array.isArray(msg.q)){
+      q = msg.q.map(r => r*180/Math.PI);
+      nieuweBridgePose = true;
+    }
+  };
+}
+verbindBtn.addEventListener("click", verbindMetBridge);
+
+/* ------------------ mat4/vec3-hulpfuncties ------------------ */
+function matIdentiteit(){ return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
+function matVermenigvuldig(a, b){
+  const o = new Float32Array(16);
+  for(let i=0;i<4;i++) for(let j=0;j<4;j++){
+    let som = 0;
+    for(let k=0;k<4;k++) som += a[k*4+j]*b[i*4+k];
+    o[i*4+j] = som;
+  }
+  return o;
+}
+function matTranslatie(x,y,z){ const m = matIdentiteit(); m[12]=x; m[13]=y; m[14]=z; return m; }
+function matRotatieX(r){ const c=Math.cos(r), s=Math.sin(r); const m=matIdentiteit(); m[5]=c; m[6]=s; m[9]=-s; m[10]=c; return m; }
+function matRotatieY(r){ const c=Math.cos(r), s=Math.sin(r); const m=matIdentiteit(); m[0]=c; m[2]=-s; m[8]=s; m[10]=c; return m; }
+function matRotatieZ(r){ const c=Math.cos(r), s=Math.sin(r); const m=matIdentiteit(); m[0]=c; m[1]=s; m[4]=-s; m[5]=c; return m; }
+function matInverteer(m){
+  const inv = new Float32Array(16); const a=m;
+  inv[0]=a[5]*a[10]*a[15]-a[5]*a[11]*a[14]-a[9]*a[6]*a[15]+a[9]*a[7]*a[14]+a[13]*a[6]*a[11]-a[13]*a[7]*a[10];
+  inv[4]=-a[4]*a[10]*a[15]+a[4]*a[11]*a[14]+a[8]*a[6]*a[15]-a[8]*a[7]*a[14]-a[12]*a[6]*a[11]+a[12]*a[7]*a[10];
+  inv[8]=a[4]*a[9]*a[15]-a[4]*a[11]*a[13]-a[8]*a[5]*a[15]+a[8]*a[7]*a[13]+a[12]*a[5]*a[11]-a[12]*a[7]*a[9];
+  inv[12]=-a[4]*a[9]*a[14]+a[4]*a[10]*a[13]+a[8]*a[5]*a[14]-a[8]*a[6]*a[13]-a[12]*a[5]*a[10]+a[12]*a[6]*a[9];
+  inv[1]=-a[1]*a[10]*a[15]+a[1]*a[11]*a[14]+a[9]*a[2]*a[15]-a[9]*a[3]*a[14]-a[13]*a[2]*a[11]+a[13]*a[3]*a[10];
+  inv[5]=a[0]*a[10]*a[15]-a[0]*a[11]*a[14]-a[8]*a[2]*a[15]+a[8]*a[3]*a[14]+a[12]*a[2]*a[11]-a[12]*a[3]*a[10];
+  inv[9]=-a[0]*a[9]*a[15]+a[0]*a[11]*a[13]+a[8]*a[1]*a[15]-a[8]*a[3]*a[13]-a[12]*a[1]*a[11]+a[12]*a[3]*a[9];
+  inv[13]=a[0]*a[9]*a[14]-a[0]*a[10]*a[13]-a[8]*a[1]*a[14]+a[8]*a[2]*a[13]+a[12]*a[1]*a[10]-a[12]*a[2]*a[9];
+  inv[2]=a[1]*a[6]*a[15]-a[1]*a[7]*a[14]-a[5]*a[2]*a[15]+a[5]*a[3]*a[14]+a[13]*a[2]*a[7]-a[13]*a[3]*a[6];
+  inv[6]=-a[0]*a[6]*a[15]+a[0]*a[7]*a[14]+a[4]*a[2]*a[15]-a[4]*a[3]*a[14]-a[12]*a[2]*a[7]+a[12]*a[3]*a[6];
+  inv[10]=a[0]*a[5]*a[15]-a[0]*a[7]*a[13]-a[4]*a[1]*a[15]+a[4]*a[3]*a[13]+a[12]*a[1]*a[7]-a[12]*a[3]*a[5];
+  inv[14]=-a[0]*a[5]*a[14]+a[0]*a[6]*a[13]+a[4]*a[1]*a[14]-a[4]*a[2]*a[13]-a[12]*a[1]*a[6]+a[12]*a[2]*a[5];
+  inv[3]=-a[1]*a[6]*a[11]+a[1]*a[7]*a[10]+a[5]*a[2]*a[11]-a[5]*a[3]*a[10]-a[9]*a[2]*a[7]+a[9]*a[3]*a[6];
+  inv[7]=a[0]*a[6]*a[11]-a[0]*a[7]*a[10]-a[4]*a[2]*a[11]+a[4]*a[3]*a[10]+a[8]*a[2]*a[7]-a[8]*a[3]*a[6];
+  inv[11]=-a[0]*a[5]*a[11]+a[0]*a[7]*a[9]+a[4]*a[1]*a[11]-a[4]*a[3]*a[9]-a[8]*a[1]*a[7]+a[8]*a[3]*a[5];
+  inv[15]=a[0]*a[5]*a[10]-a[0]*a[6]*a[9]-a[4]*a[1]*a[10]+a[4]*a[2]*a[9]+a[8]*a[1]*a[6]-a[8]*a[2]*a[5];
+  let det = a[0]*inv[0]+a[1]*inv[4]+a[2]*inv[8]+a[3]*inv[12];
+  if(det === 0) return matIdentiteit();
+  det = 1.0/det;
+  for(let i=0;i<16;i++) inv[i] *= det;
+  return inv;
+}
+function positieVan(m){ return [m[12], m[13], m[14]]; }
+/* inverse van een zuivere rotatie+verplaatsing (geen schaal) — exact en
+   goedkoop, in tegenstelling tot een algemene 4x4-inverse: R^T i.p.v. R,
+   met een herberekende translatie.                                    */
+function matInverteerRigide(m){
+  const inv = new Float32Array(16);
+  inv[0]=m[0]; inv[1]=m[4]; inv[2]=m[8];  inv[3]=0;
+  inv[4]=m[1]; inv[5]=m[5]; inv[6]=m[9];  inv[7]=0;
+  inv[8]=m[2]; inv[9]=m[6]; inv[10]=m[10]; inv[11]=0;
+  inv[12] = -(m[0]*m[12] + m[1]*m[13] + m[2]*m[14]);
+  inv[13] = -(m[4]*m[12] + m[5]*m[13] + m[6]*m[14]);
+  inv[14] = -(m[8]*m[12] + m[9]*m[13] + m[10]*m[14]);
+  inv[15] = 1;
+  return inv;
+}
+function matVecPunt(m, p){
+  return [
+    m[0]*p[0] + m[4]*p[1] + m[8]*p[2] + m[12],
+    m[1]*p[0] + m[5]*p[1] + m[9]*p[2] + m[13],
+    m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14],
+  ];
+}
+function vecAftrekken(a,b){ return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function vecOptellen(a,b){ return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+function vecSchalen(a,s){ return [a[0]*s, a[1]*s, a[2]*s]; }
+function vecLengte(a){ return Math.hypot(a[0],a[1],a[2]); }
+function vecNormaliseren(a){ const l = vecLengte(a) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
+function vecKruis(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function afstand(a, b){ return Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]); }
+
+function matInverteerN(A){
+  const n = A.length;
+  const M = A.map((rij,i) => rij.concat(Array.from({length:n}, (_,j)=> i===j?1:0)));
+  for(let col=0; col<n; col++){
+    let pivotRij = col;
+    for(let r=col+1;r<n;r++) if(Math.abs(M[r][col]) > Math.abs(M[pivotRij][col])) pivotRij = r;
+    if(Math.abs(M[pivotRij][col]) < 1e-12) return null;
+    [M[col], M[pivotRij]] = [M[pivotRij], M[col]];
+    const spil = M[col][col];
+    for(let c=0;c<2*n;c++) M[col][c] /= spil;
+    for(let r=0;r<n;r++){
+      if(r===col) continue;
+      const factor = M[r][col];
+      for(let c=0;c<2*n;c++) M[r][c] -= factor*M[col][c];
+    }
+  }
+  return M.map(rij => rij.slice(n));
+}
+
+/* Inverse kinematica (DLS) voor één of meerdere gelijktijdige doelpunten —
+   geverifieerd tegen een losse Node-test bij meerdere houdingen, inclusief
+   de volledig-verticale Home-singulariteit én een tweepunts-sleeptest
+   (TCP + ellebooggewricht tegelijk, voor het bepalen van de invalshoek).
+   doelen: [{index, positie}, ...] — index wijst naar de plek in de reeks
+   die forwardKinematica teruggeeft (8 = TCP, 3 = elleboog, enz.).       */
+function losIKOpMeerdere(qGradenStart, doelen, ankerMatrix, iteraties=8){
+  let q = qGradenStart.slice();
+  const n = doelen.length * 3;
+  for(let iter=0; iter<iteraties; iter++){
+    const matricesNu = forwardKinematica(q, ankerMatrix);
+    const huidigePosities = doelen.map(d => positieVan(matricesNu[d.index]));
+    const fout = [];
+    doelen.forEach((d,k) => fout.push(...vecAftrekken(d.positie, huidigePosities[k])));
+    if(doelen.length === 1 && vecLengte(fout) < 0.0005) break;
+
+    const J = [];
+    const stapGraden = 0.5;
+    for(let i=0;i<6;i++){
+      const qPlus = q.slice(); qPlus[i] += stapGraden;
+      const matricesPlus = forwardKinematica(qPlus, ankerMatrix);
+      const kolom = [];
+      doelen.forEach((d,k) => {
+        const nieuwePos = positieVan(matricesPlus[d.index]);
+        kolom.push(...vecSchalen(vecAftrekken(nieuwePos, huidigePosities[k]), 1/stapGraden));
+      });
+      J.push(kolom);
+    }
+    let JJt = Array.from({length:n}, () => new Array(n).fill(0));
+    for(let k=0;k<6;k++){ const c = J[k]; for(let r=0;r<n;r++) for(let cc=0;cc<n;cc++) JJt[r][cc] += c[r]*c[cc]; }
+    let spoor = 0; for(let i=0;i<n;i++) spoor += JJt[i][i];
+    /* kleinere ondergrens dan bij het enkelvoudige geval: met meerdere
+       doelpunten tegelijk is het stelsel beter bepaald (minder singulier),
+       dus een te grote vaste ondergrens remt de convergentie onnodig af. */
+    const lambda2 = Math.max(spoor*0.02, 1e-5);
+    for(let i=0;i<n;i++) JJt[i][i] += lambda2;
+    const inv = matInverteerN(JJt);
+    if(!inv) break;
+    const y = new Array(n).fill(0);
+    for(let r=0;r<n;r++) for(let c=0;c<n;c++) y[r] += inv[r][c]*fout[c];
+    for(let i=0;i<6;i++){
+      let dq = 0; for(let r=0;r<n;r++) dq += J[i][r]*y[r];
+      dq = Math.max(-8, Math.min(8, dq));
+      q[i] += dq;
+    }
+  }
+  return q;
+}
+function losIKOp(qGradenStart, doelPositie, ankerMatrix, iteraties=8){
+  return losIKOpMeerdere(qGradenStart, [{index:8, positie:doelPositie}], ankerMatrix, iteraties);
+}
+
+/* ============ geverifieerde UR5e-kinematica (getest tegen de bestaande twin, exacte overeenkomst) ============ */
+const D1=0.1625, A2=0.425, A3=0.3922, D4=0.1333, D5=0.0997, D6=0.0996;
+const H90 = Math.PI/2;
+const GRIP_L = 0.085;
+
+function forwardKinematica(qDeg, ankerMatrix){
+  const qq = qDeg.map(d => d*Math.PI/180);
+  const reeks = [];
+  let m = matVermenigvuldig(ankerMatrix, matRotatieX(-H90));       // robotRoot (anker = sokkel-positie/rotatie)
+  reeks.push(m);                                                   // 0: basis
+  m = matVermenigvuldig(m, matRotatieZ(qq[0]));                    // j1
+  reeks.push(m);                                                   // 1
+  m = matVermenigvuldig(m, matVermenigvuldig(matTranslatie(0,0,D1), matRotatieX(H90)));
+  m = matVermenigvuldig(m, matRotatieZ(qq[1]));                    // j2
+  reeks.push(m);                                                   // 2
+  m = matVermenigvuldig(m, matTranslatie(-A2,0,0));
+  m = matVermenigvuldig(m, matRotatieZ(qq[2]));                    // j3
+  reeks.push(m);                                                   // 3
+  m = matVermenigvuldig(m, matTranslatie(-A3,0,0));
+  m = matVermenigvuldig(m, matRotatieZ(qq[3]));                    // j4
+  reeks.push(m);                                                   // 4
+  m = matVermenigvuldig(m, matVermenigvuldig(matTranslatie(0,0,D4), matRotatieX(H90)));
+  m = matVermenigvuldig(m, matRotatieZ(qq[4]));                    // j5
+  reeks.push(m);                                                   // 5
+  m = matVermenigvuldig(m, matVermenigvuldig(matTranslatie(0,0,D5), matRotatieX(-H90)));
+  m = matVermenigvuldig(m, matRotatieZ(qq[5]));                    // j6
+  reeks.push(m);                                                   // 6
+  m = matVermenigvuldig(m, matTranslatie(0,0,D6));
+  reeks.push(m);                                                   // 7: flens
+  m = matVermenigvuldig(m, matTranslatie(0,0,GRIP_L));
+  reeks.push(m);                                                   // 8: tcp
+  return reeks;                                                    // elke stap = volledige 4x4-matrix, niet alleen positie
+}
+
+/* ------------------ WebGL: blokjes (gewrichten) en botjes (segmenten) ------------------ */
+let gl, session, refSpace, programma, aPosLoc, aNormaalLoc, uMvpLoc, uModelLoc, uKleurLoc;
+let hudProgramma, hudQuadBuf, hudUvBuf, hudAPosLoc, hudAUvLoc, hudUMvpLoc, hudUTexLoc;
+let hudCanvas2d, hudCtx2d, hudTexture;
+const PANEEL_BREEDTE = 0.32, PANEEL_HOOGTE = 0.20;   // fysieke afmeting van het paneel (m)
+const HUD_BREEDTE_PX = 640, HUD_HOOGTE_PX = 400;      // canvas-textuurgrootte
+let hudKnoppen = [];             // {naam, label, x,y,w,h} in canvas-pixels, elk frame opnieuw opgebouwd
+let hudKnopVorigeStatus = null;  // welke knop was VORIG frame aangeraakt — voorkomt herhaald afvuren
+
+/* ---- programma: opgeslagen houdingen + afspelen ---- */
+let programmaStappen = [];       // elk: {q:[...], open:bool}
+let afspelenActief = false, afspelenIndex = 0, afspelenStartTijd = 0;
+const AFSPEEL_DUUR_MS = 1400;
+let grijperOpenTest = true;      // losse, lokale grijperstand voor het opnemen/tonen (geen echte hardware hier)
+
+/* ------------------ WebGL: vormen (kubus/cilinder/bol) met belichting ------------------ */
+const vormen = {};   // vormen.kubus / .cilinder / .bol = {buf, normBuf, idxBuf, aantal}
+
+function bouwVormBuffer(data){
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data.posities, gl.STATIC_DRAW);
+  const normBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, data.normalen, gl.STATIC_DRAW);
+  const idxBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data.idx, gl.STATIC_DRAW);
+  return { buf, normBuf, idxBuf, aantal: data.idx.length };
+}
+
+function bouwKubusData(){
+  const p = [], n = [];
+  const voeg = (verts, normaal) => { for(const v of verts){ p.push(...v); n.push(...normaal); } };
+  voeg([[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]], [0,0,1]);
+  voeg([[1,-1,-1],[-1,-1,-1],[-1,1,-1],[1,1,-1]], [0,0,-1]);
+  voeg([[-1,-1,-1],[-1,-1,1],[-1,1,1],[-1,1,-1]], [-1,0,0]);
+  voeg([[1,-1,1],[1,-1,-1],[1,1,-1],[1,1,1]], [1,0,0]);
+  voeg([[-1,1,1],[1,1,1],[1,1,-1],[-1,1,-1]], [0,1,0]);
+  voeg([[-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1]], [0,-1,0]);
+  const idx = [];
+  for(let f=0; f<6; f++){ const b=f*4; idx.push(b,b+1,b+2, b,b+2,b+3); }
+  return { posities:new Float32Array(p), normalen:new Float32Array(n), idx:new Uint16Array(idx) };
+}
+
+/* as langs lokale Z — zo sluit dit aan op de richting die tekenSegment al gebruikt */
+function bouwCilinderData(segmenten){
+  const p = [], n = [], idx = [];
+  for(let i=0;i<segmenten;i++){
+    const hoek = (i/segmenten)*Math.PI*2, x = Math.cos(hoek), y = Math.sin(hoek);
+    p.push(x,y,-1); n.push(x,y,0);
+    p.push(x,y, 1); n.push(x,y,0);
+  }
+  for(let i=0;i<segmenten;i++){
+    const a = i*2, b = ((i+1)%segmenten)*2;
+    idx.push(a,a+1,b, b,a+1,b+1);
+  }
+  const onderC = p.length/3; p.push(0,0,-1); n.push(0,0,-1);
+  const bovenC = onderC+1; p.push(0,0,1); n.push(0,0,1);
+  for(let i=0;i<segmenten;i++){
+    const a=i*2, b=((i+1)%segmenten)*2;
+    idx.push(onderC, b, a);
+    idx.push(bovenC, a+1, b+1);
+  }
+  return { posities:new Float32Array(p), normalen:new Float32Array(n), idx:new Uint16Array(idx) };
+}
+
+function bouwBolData(breedte, hoogte){
+  const p=[], n=[], idx=[];
+  for(let iy=0; iy<=hoogte; iy++){
+    const v = iy/hoogte, phi = v*Math.PI;
+    for(let ix=0; ix<=breedte; ix++){
+      const u = ix/breedte, theta = u*Math.PI*2;
+      const x = Math.sin(phi)*Math.cos(theta), y = Math.cos(phi), z = Math.sin(phi)*Math.sin(theta);
+      p.push(x,y,z); n.push(x,y,z);
+    }
+  }
+  for(let iy=0; iy<hoogte; iy++){
+    for(let ix=0; ix<breedte; ix++){
+      const a = iy*(breedte+1)+ix, b = a+breedte+1;
+      idx.push(a,b,a+1, b,b+1,a+1);
+    }
+  }
+  return { posities:new Float32Array(p), normalen:new Float32Array(n), idx:new Uint16Array(idx) };
+}
+
+function bouwGeometrie(){
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, `
+    attribute vec3 aPos; attribute vec3 aNormaal;
+    uniform mat4 uMvp; uniform mat4 uModel;
+    varying vec3 vNormaalWereld;
+    void main(){
+      gl_Position = uMvp * vec4(aPos,1.0);
+      vNormaalWereld = mat3(uModel) * aNormaal;
+    }`);
+  gl.compileShader(vs);
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, `
+    precision mediump float;
+    varying vec3 vNormaalWereld;
+    uniform vec3 uKleur;
+    void main(){
+      vec3 n = normalize(vNormaalWereld);
+      vec3 lichtRichting = normalize(vec3(0.4, 0.8, 0.5));
+      float diffuus = max(dot(n, lichtRichting), 0.0);
+      float rimlicht = pow(1.0 - abs(n.z), 2.0) * 0.15;   // subtiel randlicht, oogt minder plat
+      vec3 kleur = uKleur * (0.42 + 0.58*diffuus) + rimlicht;
+      gl_FragColor = vec4(kleur, 1.0);
+    }`);
+  gl.compileShader(fs);
+  programma = gl.createProgram();
+  gl.attachShader(programma, vs); gl.attachShader(programma, fs); gl.linkProgram(programma);
+  if(!gl.getProgramParameter(programma, gl.LINK_STATUS)) throw new Error("Shader-link mislukt: " + gl.getProgramInfoLog(programma));
+  aPosLoc = gl.getAttribLocation(programma, "aPos");
+  aNormaalLoc = gl.getAttribLocation(programma, "aNormaal");
+  uMvpLoc = gl.getUniformLocation(programma, "uMvp");
+  uModelLoc = gl.getUniformLocation(programma, "uModel");
+  uKleurLoc = gl.getUniformLocation(programma, "uKleur");
+
+  vormen.kubus = bouwVormBuffer(bouwKubusData());
+  vormen.cilinder = bouwVormBuffer(bouwCilinderData(20));
+  vormen.bol = bouwVormBuffer(bouwBolData(16,12));
+}
+
+function tekenVorm(viewMatrix, projMatrix, modelMatrix, kleur, vorm){
+  const v = vormen[vorm];
+  const mvp = matVermenigvuldig(projMatrix, matVermenigvuldig(viewMatrix, modelMatrix));
+  gl.useProgram(programma);
+  gl.bindBuffer(gl.ARRAY_BUFFER, v.buf);
+  gl.enableVertexAttribArray(aPosLoc);
+  gl.vertexAttribPointer(aPosLoc, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, v.normBuf);
+  gl.enableVertexAttribArray(aNormaalLoc);
+  gl.vertexAttribPointer(aNormaalLoc, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, v.idxBuf);
+  gl.uniformMatrix4fv(uMvpLoc, false, mvp);
+  gl.uniformMatrix4fv(uModelLoc, false, modelMatrix);
+  gl.uniform3fv(uKleurLoc, kleur);
+  gl.drawElements(gl.TRIANGLES, v.aantal, gl.UNSIGNED_SHORT, 0);
+}
+/* oude naam blijft werken voor bestaande aanroepen (kubus, zoals voorheen) */
+function tekenMet(viewMatrix, projMatrix, modelMatrix, kleur){ tekenVorm(viewMatrix, projMatrix, modelMatrix, kleur, "kubus"); }
+
+function tekenGewricht(viewMatrix, projMatrix, positie, kleur, straal=0.032){
+  const model = matVermenigvuldig(matTranslatie(...positie), matSchaal(straal));
+  tekenVorm(viewMatrix, projMatrix, model, kleur, "bol");
+}
+function matSchaal(s){ const m = matIdentiteit(); m[0]=s; m[5]=s; m[10]=s; return m; }
+function matSchaalXYZ(sx,sy,sz){ const m = matIdentiteit(); m[0]=sx; m[5]=sy; m[10]=sz; return m; }
+
+/* brede, platte voet — Ø151mm volgens het datasheet (UR7e, zelfde
+   voetmaat-klasse als de UR5e), in plaats van een even groot bolletje
+   als de andere gewrichten.                                          */
+function tekenVoet(viewMatrix, projMatrix, positie, kleur){
+  const model = matVermenigvuldig(matVermenigvuldig(matTranslatie(...positie), matRotatieX(H90)), matSchaalXYZ(0.0755, 0.0755, 0.018));
+  tekenVorm(viewMatrix, projMatrix, model, kleur, "cilinder");
+}
+
+function tekenSegment(viewMatrix, projMatrix, a, b, dikte, kleur){
+  const midden = vecSchalen(vecOptellen(a,b), 0.5);
+  const richting = vecAftrekken(b, a);
+  const lengte = vecLengte(richting);
+  if(lengte < 0.001) return;
+  const dirN = vecNormaliseren(richting);
+  let ref = Math.abs(dirN[1]) > 0.9 ? [1,0,0] : [0,1,0];
+  const rechts = vecNormaliseren(vecKruis(ref, dirN));
+  const omhoog = vecKruis(dirN, rechts);
+  const model = new Float32Array([
+    rechts[0]*dikte, rechts[1]*dikte, rechts[2]*dikte, 0,
+    omhoog[0]*dikte, omhoog[1]*dikte, omhoog[2]*dikte, 0,
+    dirN[0]*(lengte/2), dirN[1]*(lengte/2), dirN[2]*(lengte/2), 0,
+    midden[0], midden[1], midden[2], 1,
+  ]);
+  tekenVorm(viewMatrix, projMatrix, model, kleur, "cilinder");
+}
+
+/* bouwt een modelmatrix uit drie eigen richtingsvectoren i.p.v. rotatiehoeken
+   — gebruikt om de grijper exact volgens de werkelijke flensoriëntatie neer
+   te zetten, in plaats van een losse rotatie te moeten herberekenen.      */
+function matVanBasis(rechts, omhoog, voor, positie, sx, sy, sz){
+  return new Float32Array([
+    rechts[0]*sx, rechts[1]*sx, rechts[2]*sx, 0,
+    omhoog[0]*sy, omhoog[1]*sy, omhoog[2]*sy, 0,
+    voor[0]*sz, voor[1]*sz, voor[2]*sz, 0,
+    positie[0], positie[1], positie[2], 1,
+  ]);
+}
+
+/* eenvoudige parallelgrijper — palm + twee vingers — op de exacte
+   flensoriëntatie, zodat hij altijd de juiste kant op wijst.         */
+function tekenGrijper(viewMatrix, projMatrix, flensMatrix){
+  const rechts = [flensMatrix[0], flensMatrix[1], flensMatrix[2]];
+  const omhoog = [flensMatrix[4], flensMatrix[5], flensMatrix[6]];
+  const voor   = [flensMatrix[8], flensMatrix[9], flensMatrix[10]];
+  const flensPos = positieVan(flensMatrix);
+  const kleurGrijper = [0.55,0.58,0.62];
+
+  const palmAfstand = 0.022;
+  const palmPos = vecOptellen(flensPos, vecSchalen(voor, palmAfstand));
+  tekenVorm(viewMatrix, projMatrix, matVanBasis(rechts, omhoog, voor, palmPos, 0.030, 0.022, 0.020), kleurGrijper, "kubus");
+
+  const vingerOpening = 0.018, vingerLengte = 0.028;
+  const vingerAfstand = palmAfstand + 0.020 + vingerLengte;
+  for(const kant of [-1, 1]){
+    const vingerPos = vecOptellen(vecOptellen(flensPos, vecSchalen(voor, vingerAfstand)), vecSchalen(rechts, kant*vingerOpening));
+    tekenVorm(viewMatrix, projMatrix, matVanBasis(rechts, omhoog, voor, vingerPos, 0.007, 0.013, vingerLengte), kleurGrijper, "kubus");
+  }
+}
+
+/* ------------------ interactief HUD-paneel (status + knoppen) ------------------ */
+function bouwHudQuad(){
+  const hb = PANEEL_BREEDTE/2, hh = PANEEL_HOOGTE/2;
+  const pos = new Float32Array([ -hb,-hh,0,  hb,-hh,0,  hb,hh,0,  -hb,hh,0 ]);
+  const uv  = new Float32Array([ 0,1, 1,1, 1,0, 0,0 ]);
+  const idx = new Uint16Array([0,1,2, 0,2,3]);
+  hudQuadBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, hudQuadBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+  hudUvBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, hudUvBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
+  const hudIdxBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hudIdxBuf);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+  hudQuadBuf.idx = hudIdxBuf;
+
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, `attribute vec3 aPos; attribute vec2 aUv; uniform mat4 uMvp; varying vec2 vUv;
+    void main(){ gl_Position = uMvp * vec4(aPos,1.0); vUv = aUv; }`);
+  gl.compileShader(vs);
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, `precision mediump float; varying vec2 vUv; uniform sampler2D uTex;
+    void main(){ gl_FragColor = texture2D(uTex, vUv); }`);
+  gl.compileShader(fs);
+  hudProgramma = gl.createProgram();
+  gl.attachShader(hudProgramma, vs); gl.attachShader(hudProgramma, fs); gl.linkProgram(hudProgramma);
+  if(!gl.getProgramParameter(hudProgramma, gl.LINK_STATUS)) throw new Error("HUD-shader-link mislukt: " + gl.getProgramInfoLog(hudProgramma));
+  hudAPosLoc = gl.getAttribLocation(hudProgramma, "aPos");
+  hudAUvLoc = gl.getAttribLocation(hudProgramma, "aUv");
+  hudUMvpLoc = gl.getUniformLocation(hudProgramma, "uMvp");
+  hudUTexLoc = gl.getUniformLocation(hudProgramma, "uTex");
+
+  hudCanvas2d = document.createElement("canvas");
+  hudCanvas2d.width = HUD_BREEDTE_PX; hudCanvas2d.height = HUD_HOOGTE_PX;
+  hudCtx2d = hudCanvas2d.getContext("2d");
+  hudTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, hudTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+/* Tekent de statusregels + drie knoppen, en bouwt tegelijk hudKnoppen op
+   (canvas-pixelvlakken) zodat aanraaklogica en tekening altijd bij elkaar
+   passen — één plek die bepaalt waar alles staat.                      */
+function tekenHudTekst(regels, geraakteKnop){
+  const ctx = hudCtx2d;
+  ctx.fillStyle = "rgba(13,17,23,0.90)";
+  ctx.fillRect(0, 0, HUD_BREEDTE_PX, HUD_HOOGTE_PX);
+  ctx.strokeStyle = "#58a6ff"; ctx.lineWidth = 6;
+  ctx.strokeRect(3, 3, HUD_BREEDTE_PX-6, HUD_HOOGTE_PX-6);
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "bold 26px Consolas, monospace";
+  ctx.textBaseline = "top";
+  regels.forEach((regel, i) => ctx.fillText(regel, 20, 16 + i*32));
+
+  hudKnoppen = [
+    { naam:"vastleggen", label:"+ Vastleggen" },
+    { naam:"afspelen",   label: afspelenActief ? "Stop" : "Afspelen" },
+    { naam:"wissen",     label:"Wissen" },
+  ];
+  const knopY = HUD_HOOGTE_PX - 90, knopH = 70, marge = 16;
+  const knopW = (HUD_BREEDTE_PX - marge*4) / 3;
+  hudKnoppen.forEach((k, i) => {
+    k.x = marge + i*(knopW+marge); k.y = knopY; k.w = knopW; k.h = knopH;
+    const aangeraakt = geraakteKnop === k.naam;
+    ctx.fillStyle = aangeraakt ? "#E6007E" : "#21262d";
+    ctx.strokeStyle = "#3a4048"; ctx.lineWidth = 2;
+    ctx.fillRect(k.x, k.y, k.w, k.h);
+    ctx.strokeRect(k.x, k.y, k.w, k.h);
+    ctx.fillStyle = "#e6edf3";
+    ctx.font = "bold 22px Consolas, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(k.label, k.x + k.w/2, k.y + k.h/2);
+    ctx.textAlign = "left"; ctx.textBaseline = "top";
+  });
+
+  gl.bindTexture(gl.TEXTURE_2D, hudTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, hudCanvas2d);
+}
+
+function tekenHudQuad(viewMatrix, projMatrix, hudModelMatrix){
+  const mvp = matVermenigvuldig(projMatrix, matVermenigvuldig(viewMatrix, hudModelMatrix));
+  gl.useProgram(hudProgramma);
+  gl.bindBuffer(gl.ARRAY_BUFFER, hudQuadBuf);
+  gl.enableVertexAttribArray(hudAPosLoc);
+  gl.vertexAttribPointer(hudAPosLoc, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, hudUvBuf);
+  gl.enableVertexAttribArray(hudAUvLoc);
+  gl.vertexAttribPointer(hudAUvLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hudQuadBuf.idx);
+  gl.uniformMatrix4fv(hudUMvpLoc, false, mvp);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, hudTexture);
+  gl.uniform1i(hudUTexLoc, 0);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthMask(false);
+  gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+}
+
+function hudModelMatrixNu(hoofdMatrix){
+  /* 40cm voor je, iets omlaag — zelfde plek als eerder, nu met knoppen erop */
+  return matVermenigvuldig(hoofdMatrix, matTranslatie(0, -0.12, -0.40));
+}
+
+/* Bepaalt of een wereldpunt (bijv. een knijppositie) op dit moment binnen
+   een van de knopvlakken van het paneel valt. Geeft de knopnaam terug, of
+   null. Werkt door het punt naar de LOKALE ruimte van het paneel om te
+   rekenen (inverse van de paneel-matrix) en dat tegen de canvas-vlakken
+   van tekenHudTekst te toetsen — dezelfde afmetingen, dus altijd in sync. */
+function hudKnopOpWereldpunt(wereldPunt, hudModelMatrix){
+  const inv = matInverteerRigide(hudModelMatrix);
+  const lokaal = matVecPunt(inv, wereldPunt);
+  if(Math.abs(lokaal[2]) > 0.06) return null;   // te ver vóór/achter het platte paneel
+  const hb = PANEEL_BREEDTE/2, hh = PANEEL_HOOGTE/2;
+  if(lokaal[0] < -hb || lokaal[0] > hb || lokaal[1] < -hh || lokaal[1] > hh) return null;
+  const cx = (lokaal[0]+hb)/PANEEL_BREEDTE * HUD_BREEDTE_PX;
+  const cy = (hh-lokaal[1])/PANEEL_HOOGTE * HUD_HOOGTE_PX;
+  for(const k of hudKnoppen){
+    if(cx >= k.x && cx <= k.x+k.w && cy >= k.y && cy <= k.y+k.h) return k.naam;
+  }
+  return null;
+}
+
+
+let ankerPositie = [0, -0.3, -0.8];   // startpunt: 80cm voor je, iets omlaag
+let ankerYawGraden = 0;
+let geknepenBronnen = new Map();   // inputSource -> mode-info voor elke ACTIEVE knijp
+let grijpModus = null;             // laatst toegewezen modus, gebruikt voor de HUD-statustekst
+let qHuidig = [0,-90,0,-90,0,0];      // eigen, versleepbare houding (los van live q van de bridge)
+
+function ankerMatrixNu(){
+  return matVermenigvuldig(matTranslatie(...ankerPositie), matRotatieY(ankerYawGraden*Math.PI/180));
+}
+
+startBtn.addEventListener("click", async () => {
+  startBtn.disabled = true;
+  zetStatus(["Sessie aanvragen …"]);
+  try{
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("time-out na 10s")), 10000));
+    session = await Promise.race([
+      navigator.xr.requestSession("immersive-ar", { optionalFeatures: ["hand-tracking", "local"] }),
+      timeout,
+    ]);
+  } catch(err){
+    zetStatus(["✗ Sessie starten mislukt: " + err.message], true);
+    startBtn.disabled = false;
+    return;
+  }
+
+  try{
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    gl = canvas.getContext("webgl", { xrCompatible: true });
+    if(!gl) throw new Error("Kon geen WebGL-context krijgen.");
+    gl.enable(gl.DEPTH_TEST);
+    bouwGeometrie();
+    bouwHudQuad();
+    await session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+    try{ refSpace = await session.requestReferenceSpace("local"); }
+    catch(e1){ refSpace = await session.requestReferenceSpace("viewer"); }
+
+    session.addEventListener("selectstart", e => { geknepenBronnen.set(e.inputSource, {modus:null}); });
+    session.addEventListener("selectend", e => { geknepenBronnen.delete(e.inputSource); });
+
+    document.getElementById("ui").style.display = "none";
+    exitBtn.style.display = "block";
+
+    session.requestAnimationFrame(function frameLoop(t, frame){
+      try{
+        session.requestAnimationFrame(frameLoop);
+        const pose = frame.getViewerPose(refSpace);
+        if(!pose) return;
+
+        /* Elke actieve knijp (kan er 0, 1 of 2 zijn — één per hand) met zijn huidige positie. */
+        const actieveKnijpen = [];
+        for(const bron of session.inputSources){
+          if(!geknepenBronnen.has(bron)) continue;
+          const ruimte = bron.gripSpace || bron.targetRaySpace;
+          if(!ruimte) continue;
+          const p = frame.getPose(ruimte, refSpace);
+          if(!p) continue;
+          actieveKnijpen.push({ bron, positie: [p.transform.position.x, p.transform.position.y, p.transform.position.z], info: geknepenBronnen.get(bron) });
+        }
+
+        /* Volgt standaard de bridge; tijdens een TCP-sleep wordt qHuidig
+           lokaal overschreven door de IK-oplosser (net als "vrije stand"
+           in de gewone twin: zelf slepen koppelt je tijdelijk los).     */
+        const ankerM = ankerMatrixNu();
+        const hoofdMatrix = pose.transform.matrix;
+        const hudModelMatrix = hudModelMatrixNu(hoofdMatrix);
+        const bezigMetSturen = actieveKnijpen.some(k => k.info.modus === "tcp" || k.info.modus === "arm");
+
+        if(afspelenActief && programmaStappen.length >= 2){
+          const verstreken = t - afspelenStartTijd;
+          const fractie = Math.min(1, verstreken / AFSPEEL_DUUR_MS);
+          const van = programmaStappen[afspelenIndex], naar = programmaStappen[afspelenIndex+1];
+          qHuidig = van.q.map((v,i) => v + (naar.q[i]-v)*fractie);
+          grijperOpenTest = fractie < 0.5 ? van.open : naar.open;
+          if(fractie >= 1){
+            afspelenIndex++;
+            afspelenStartTijd = t;
+            if(afspelenIndex >= programmaStappen.length-1){
+              afspelenActief = false;
+              qHuidig = programmaStappen[programmaStappen.length-1].q.slice();
+              grijperOpenTest = programmaStappen[programmaStappen.length-1].open;
+            }
+          }
+        } else if(!bezigMetSturen && nieuweBridgePose){
+          qHuidig = q.slice(); nieuweBridgePose = false;
+        }
+
+        const matricesNu = forwardKinematica(qHuidig, ankerM);
+        const tcpPositieNu = positieVan(matricesNu[matricesNu.length-1]);
+        /* armgewrichten die je vast kunt pakken voor de invalshoek: j1 t/m flens
+           (index 1..7) — niet de voet (0, dat is het anker) en niet het TCP (8,
+           dat heeft al zijn eigen, directere grijplogica).                     */
+        const armIndices = [1,2,3,4,5,6,7];
+
+        for(const knijp of actieveKnijpen){
+          if(knijp.info.modus !== null) continue;   // deze hand was al eerder toegewezen, niet opnieuw bepalen
+          const geraakt = hudKnopOpWereldpunt(knijp.positie, hudModelMatrix);
+          if(geraakt){ knijp.info.modus = "hud"; continue; }
+
+          const afstandAnker = afstand(knijp.positie, ankerPositie);
+          const afstandTcp = afstand(knijp.positie, tcpPositieNu);
+          let dichtsteArmIndex = null, afstandArm = Infinity;
+          for(const idx of armIndices){
+            const d = afstand(knijp.positie, positieVan(matricesNu[idx]));
+            if(d < afstandArm){ afstandArm = d; dichtsteArmIndex = idx; }
+          }
+
+          const kleinste = Math.min(afstandAnker, afstandTcp, afstandArm);
+          if(kleinste >= 0.20) continue;   // niets dichtbij genoeg — deze hand doet (nog) niets
+          if(kleinste === afstandTcp) knijp.info.modus = "tcp";
+          else if(kleinste === afstandAnker) knijp.info.modus = "anker";
+          else { knijp.info.modus = "arm"; knijp.info.armIndex = dichtsteArmIndex; }
+          afspelenActief = false;   // zelf sturen onderbreekt het afspelen
+        }
+
+        const tcpGrab = actieveKnijpen.find(k => k.info.modus === "tcp");
+        const armGrab = actieveKnijpen.find(k => k.info.modus === "arm");
+        const ankerGrab = actieveKnijpen.find(k => k.info.modus === "anker");
+        const hudGrab = actieveKnijpen.find(k => k.info.modus === "hud");
+
+        if(tcpGrab && armGrab){
+          /* twee handen tegelijk: TCP bepaalt de positie, het armpunt de invalshoek. */
+          qHuidig = losIKOpMeerdere(qHuidig, [
+            { index:8, positie: tcpGrab.positie },
+            { index: armGrab.info.armIndex, positie: armGrab.positie },
+          ], ankerM, 10);
+        } else if(tcpGrab){
+          qHuidig = losIKOp(qHuidig, tcpGrab.positie, ankerM, 8);
+        } else if(armGrab){
+          qHuidig = losIKOpMeerdere(qHuidig, [{ index: armGrab.info.armIndex, positie: armGrab.positie }], ankerM, 8);
+        }
+        if(ankerGrab) ankerPositie = ankerGrab.positie;
+
+        if(hudGrab){
+          const knopNu = hudKnopOpWereldpunt(hudGrab.positie, hudModelMatrix);
+          if(knopNu && knopNu !== hudKnopVorigeStatus){
+            if(knopNu === "vastleggen"){
+              programmaStappen.push({ q: qHuidig.slice(), open: grijperOpenTest });
+            } else if(knopNu === "afspelen"){
+              if(afspelenActief){ afspelenActief = false; }
+              else if(programmaStappen.length >= 2){ afspelenActief = true; afspelenIndex = 0; afspelenStartTijd = t; }
+            } else if(knopNu === "wissen"){
+              programmaStappen = []; afspelenActief = false;
+            }
+          }
+          hudKnopVorigeStatus = knopNu;
+        } else {
+          hudKnopVorigeStatus = null;
+        }
+
+        /* samengevatte modus, alleen voor de statustekst/kleuren hieronder */
+        grijpModus = tcpGrab && armGrab ? "tcp+arm" : tcpGrab ? "tcp" : armGrab ? "arm" : ankerGrab ? "anker" : hudGrab ? "hud" : null;
+
+        const matrices = forwardKinematica(qHuidig, ankerM);
+        const gewrichten = matrices.map(positieVan);
+        /* dikte en tint lopen af van basis (dik, grijs) naar pols (dunner, lichter) */
+        const diktes  = [0.037, 0.034, 0.030, 0.024, 0.020, 0.018, 0.016];
+        const kleuren = [
+          [0.42,0.46,0.50], [0.58,0.61,0.65], [0.58,0.61,0.65], [0.52,0.55,0.59],
+          [0.47,0.50,0.54], [0.47,0.50,0.54], [0.42,0.45,0.49],
+        ];
+        const gewrichtKleur = [0.35,0.72,0.83];       // cyaan-achtig, zoals de ringen op de echte robot
+        const tcpKleur = tcpGrab ? [1,0.3,0.6] : [0.90,0.0,0.49];
+        const ankerKleur = ankerGrab ? [1,0.3,0.6] : [0.9,0.6,0.1];
+        const gewrichtGegrepenKleur = [1,0.3,0.6];
+
+        const statusRegels = [
+          "Bridge: " + bridgeStatusTekst,
+          "Modus: " + (grijpModus || "vrij") + (grijpModus === "hud" ? " (" + (hudKnopVorigeStatus||"") + ")" : ""),
+          "Waypoints: " + programmaStappen.length,
+          afspelenActief ? "Afspelen: stap " + (afspelenIndex+1) + "/" + programmaStappen.length : "Afspelen: gestopt",
+        ];
+        tekenHudTekst(statusRegels, grijpModus === "hud" ? hudKnopVorigeStatus : null);
+
+        const layer = session.renderState.baseLayer;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+        gl.clear(gl.DEPTH_BUFFER_BIT);
+        for(const view of pose.views){
+          const vp = layer.getViewport(view);
+          gl.viewport(vp.x, vp.y, vp.width, vp.height);
+          const viewMatrix = matInverteer(view.transform.matrix);
+          const projMatrix = view.projectionMatrix;
+
+          tekenVoet(viewMatrix, projMatrix, gewrichten[0], ankerKleur);
+          /* basis t/m flens (index 0..7): armsegmenten. het laatste stuk (flens->tcp) is de grijper zelf. */
+          for(let i=0;i<7;i++){
+            tekenSegment(viewMatrix, projMatrix, gewrichten[i], gewrichten[i+1], diktes[i], kleuren[i]);
+            tekenGewricht(viewMatrix, projMatrix, gewrichten[i+1], (armGrab && armGrab.info.armIndex===i+1) ? gewrichtGegrepenKleur : gewrichtKleur, i===6 ? 0.030 : 0.036);
+          }
+          tekenGrijper(viewMatrix, projMatrix, matrices[7]);
+          tekenGewricht(viewMatrix, projMatrix, gewrichten[8], tcpKleur, 0.012);
+          tekenHudQuad(viewMatrix, projMatrix, hudModelMatrix);
+        }
+      } catch(renderErr){
+        console.error("Fout tijdens renderen:", renderErr);
+        zetStatus(["✗ Fout tijdens renderen: " + renderErr.message], true);
+        session.end();
+      }
+    });
+  } catch(setupErr){
+    zetStatus(["✗ Fout na het starten van de sessie:", setupErr.message], true);
+    startBtn.disabled = false;
+    if(session){ try{ await session.end(); } catch(e){} }
+    return;
+  }
+
+  session.addEventListener("end", () => {
+    document.querySelectorAll("canvas").forEach(c => c.remove());
+    document.getElementById("ui").style.display = "flex";
+    exitBtn.style.display = "none";
+    startBtn.disabled = !arOndersteund;
+    if(statusEl.className !== "err"){
+      zetStatus([arOndersteund ? "✓ immersive-ar wordt ondersteund." : "✗ niet ondersteund", "Sessie afgesloten."]);
+    }
+  });
+});
+
+exitBtn.addEventListener("click", () => { if(session) session.end(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>UR5e Digital Twin — Handleiding</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --magenta:#E6007E; --donkerblauw:#1A2B5F; --lichtgrijs:#F7F7F7; --grijs:#9AA3B2;
+  }
+  *{box-sizing:border-box;}
+  body{
+    font-family:Arial, Helvetica, sans-serif; margin:0; background:#fff; color:#222;
+    line-height:1.6;
+  }
+  header{
+    background:var(--donkerblauw); color:#fff; padding:28px 40px;
+    display:flex; align-items:center; gap:16px;
+  }
+  header .blok{width:40px; height:40px; background:var(--magenta); border-radius:8px; flex:0 0 auto;}
+  header h1{margin:0; font-size:22px;}
+  header p{margin:2px 0 0; color:#c8cfe0; font-size:13px;}
+  main{max-width:820px; margin:0 auto; padding:32px 40px 80px;}
+  nav{
+    background:var(--lichtgrijs); border-radius:10px; padding:18px 24px; margin-bottom:32px;
+    border-left:4px solid var(--magenta);
+  }
+  nav h2{font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--donkerblauw); margin:0 0 10px;}
+  nav ul{margin:0; padding-left:20px; columns:2; column-gap:24px;}
+  nav a{color:var(--donkerblauw); text-decoration:none; font-size:14px;}
+  nav a:hover{color:var(--magenta); text-decoration:underline;}
+  section{margin-bottom:40px; scroll-margin-top:16px;}
+  h2{
+    color:var(--magenta); font-size:20px; border-bottom:2px solid var(--magenta);
+    padding-bottom:6px; margin:0 0 14px;
+  }
+  h3{color:var(--donkerblauw); font-size:15px; margin:20px 0 8px;}
+  p{margin:0 0 12px;}
+  code{
+    background:var(--lichtgrijs); color:var(--donkerblauw); padding:1px 6px; border-radius:4px;
+    font-family:'Consolas', monospace; font-size:13px;
+  }
+  .let-op{
+    background:#FFF4E5; border-left:4px solid #E6A23C; border-radius:6px;
+    padding:12px 16px; margin:14px 0; font-size:14px;
+  }
+  .veiligheid{
+    background:#FDECEE; border-left:4px solid var(--magenta); border-radius:6px;
+    padding:12px 16px; margin:14px 0; font-size:14px;
+  }
+  .veld{
+    display:inline-block; background:var(--lichtgrijs); border-radius:4px; padding:1px 8px;
+    font-family:'Consolas', monospace; font-size:13px; color:var(--donkerblauw); font-weight:bold;
+  }
+  table{width:100%; border-collapse:collapse; margin:12px 0; font-size:14px;}
+  th, td{text-align:left; padding:8px 10px; border-bottom:1px solid #e2e2e2;}
+  th{color:var(--donkerblauw); border-bottom:2px solid var(--donkerblauw);}
+  ul, ol{margin:0 0 12px; padding-left:22px;}
+  li{margin-bottom:4px;}
+  footer{
+    background:var(--donkerblauw); color:#c8cfe0; text-align:center; padding:20px;
+    font-size:12px; letter-spacing:.05em; text-transform:uppercase;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="blok"></div>
+  <div>
+    <h1>UR5e Digital Twin — Handleiding</h1>
+    <p>RoboLab · Gilde Opleidingen · Einstein Telescoop-traject</p>
+  </div>
+</header>
+
+<main>
+  <nav>
+    <h2>Inhoud</h2>
+    <ul>
+      <li><a href="#opstelling">Opstelling</a></li>
+      <li><a href="#gewrichten">Gewrichten · MoveJ/MoveP</a></li>
+      <li><a href="#grijper">Grijper &amp; doos</a></li>
+      <li><a href="#programma">Programma</a></li>
+      <li><a href="#verbinding">Verbinding met de echte robot</a></li>
+      <li><a href="#sessie">Sessie opslaan/laden</a></li>
+      <li><a href="#veiligheid">Veiligheid</a></li>
+    </ul>
+  </nav>
+
+  <section id="opstelling">
+    <h2>Opstelling</h2>
+    <p>Deze instellingen leg je één keer vast voor jouw fysieke opstelling — daarna hoef je er niet meer naar om te kijken.</p>
+
+    <h3>Montagehoogte</h3>
+    <p>De afstand tussen de vloer en de voet van de robot. Bij het lab-statief is dat 350&nbsp;mm (de standaardwaarde). Staat de robot bij jou rechtstreeks op een tafel gemonteerd, zodat het tafelvlak gelijk is aan het nulpunt van de robot zelf? Zet dit veld dan op <span class="veld">0</span>.</p>
+    <p>Deze waarde bepaalt ook waar geladen omgevingsmodellen (zie hieronder) en de standaardvloer getekend worden.</p>
+
+    <h3>TCP-lengte</h3>
+    <p>De afstand van de flens (het draaipunt van gewricht 6) tot het echte gereedschapspunt — waar de robot daadwerkelijk grijpt. Standaard 85&nbsp;mm, wat overeenkomt met de kale vingertoppen van de parallelgrijper.</p>
+    <p>Zit er een camera of ander verlengstuk tussen de flens en de grijper, waardoor het grijppunt verder naar voren ligt? Verhoog dan deze waarde. Er verschijnt automatisch een blokje tussen de pols en de grijper dat het verschil visualiseert, en de hele grijper schuift mee naar buiten — zodat je in de twin altijd ziet waar de robot in werkelijkheid pakt.</p>
+
+    <h3>Eigen omgeving (STEP / IGES / STL)</h3>
+    <p>Vervang de standaard cirkelvloer door een eigen 3D-model — bijvoorbeeld de tafel waarop de robot gemonteerd is. Het nulpunt van jouw bestand komt te liggen op het nulpunt van de robot.</p>
+    <table>
+      <tr><th>Veld</th><th>Betekenis</th></tr>
+      <tr><td>X / Y / Z (mm)</td><td>Verschuiving van het bestand-nulpunt t.o.v. het robot-nulpunt. Z = hoogte.</td></tr>
+      <tr><td>RX / RY / RZ (graden)</td><td>Rotatie, voor als het bestand niet rechtop staat (komt vaak voor — CAD-pakketten hanteren niet allemaal dezelfde "boven"-richting).</td></tr>
+    </table>
+    <p>STEP/IGES-bestanden bevatten hun eigen eenheid en worden automatisch correct geschaald. STL-bestanden kennen geen eenheid-informatie — de twin gaat er daarom vanuit dat de maten in millimeters staan, wat de gangbare afspraak is voor zo goed als elk CAD-pakket (waaronder SolidWorks).</p>
+    <p>Je kunt meerdere bestanden na elkaar laden; ze blijven allemaal zichtbaar. Klik op de bestandsnaam in de lijst om 'm opnieuw te selecteren en de positie/rotatie achteraf bij te stellen, zonder opnieuw te hoeven uploaden.</p>
+    <div class="let-op"><b>Let op:</b> STEP/IGES laden vereist de CAD-kernel (<code>occt-import-js.js</code> + <code>.wasm</code>), en die moet naast <code>ur5-digital-twin.html</code> staan én via een lokale server geopend worden (niet met dubbelklikken). STL heeft deze kernel niet nodig en werkt overal.</div>
+  </section>
+
+  <section id="gewrichten">
+    <h2>Gewrichten · MoveJ versus MoveP</h2>
+    <p>De zes schuifregelaars sturen de gewrichtshoeken (J1 t/m J6) rechtstreeks aan — direct, zonder vertraging. De presetknoppen (Home, Nulstand, Pick, Place) bewegen de robot juist <i>naar</i> een doel toe, en daarvoor kun je kiezen hoe:</p>
+    <table>
+      <tr><th>Modus</th><th>Wat gebeurt er</th><th>Wanneer gebruiken</th></tr>
+      <tr><td><b>MoveJ</b></td><td>Elk gewricht interpoleert onafhankelijk naar zijn doelhoek. De TCP volgt daarbij een gebogen, onvoorspelbare baan.</td><td>Standaardkeuze. Snelste route, geschikt voor grote verplaatsingen en heroriëntaties.</td></tr>
+      <tr><td><b>MoveP</b></td><td>De TCP verplaatst in een kaarsrechte lijn met constante snelheid; de gewrichtshoeken worden er per tussenstap bij uitgerekend (inverse kinematica).</td><td>Korte, rechte procesbewegingen — bijvoorbeeld recht een werkstuk in bewegen. Ongeschikt voor grote afstanden: dan loop je kans op een singulariteit of werkruimtegrens.</td></tr>
+    </table>
+    <p>Dezelfde keuze staat ook in het Programma-paneel (zie verderop) — daar geldt hij per waypoint in plaats van per presetklik.</p>
+  </section>
+
+  <section id="grijper">
+    <h2>Grijper &amp; doos</h2>
+    <p><b>Grijper open/dicht</b> bedient de parallelgrijper. Staat er een doosje binnen bereik, dan pakt "dicht" het vast; nogmaals "open" laat het weer los.</p>
+    <h3>Doosje plaatsen</h3>
+    <p>Vul de exacte afmeting (breedte × diepte × hoogte, in mm) en de exacte positie in — X/Y/Z ten opzichte van het robot-nulpunt, waarbij Z de <i>onderkant</i> van het doosje is (dus Z&nbsp;=&nbsp;0 betekent: staat op tafelhoogte). Dezelfde coördinaten als overal elders in de twin, dus een positie die je van de echte robot of pendant overneemt komt hier exact overeen.</p>
+    <p>Klik op een al geplaatst doosje om het te selecteren — het formulier vult zich dan met de huidige waarden, en de knop wordt "Doosje bijwerken" in plaats van "plaatsen". Zo kun je de positie/afmeting achteraf precies bijstellen zonder het doosje te hoeven verwijderen en opnieuw te maken.</p>
+    <p><b>Reset dozen</b> verwijdert alle geplaatste dozen in één keer.</p>
+  </section>
+
+  <section id="programma">
+    <h2>Programma</h2>
+    <p>Bouw een reeks bewegingen op die je later in één keer kunt afspelen — in de simulatie, of (zie Verbinding) rechtstreeks op de echte robot.</p>
+    <ul>
+      <li><b>+ Huidige pose</b> — legt de huidige stand vast als stap, met het MoveJ/MoveP-type dat op dat moment geselecteerd staat.</li>
+      <li><b>+ Grijper open / + Grijper dicht</b> — voegt een grijperactie toe als losse stap.</li>
+      <li><b>▶ Afspelen / ■ Stop</b> — speelt de opgebouwde reeks af; met <b>Herhalen</b> aangevinkt blijft dat doorlopen.</li>
+      <li><b>Snelheid</b> — percentage van de maximale snelheid, geldt voor de hele reeks.</li>
+      <li><b>Opslaan / Openen</b> — bewaart alleen het programma zelf als los bestand (voor Opstelling + dozen + programma in één keer, zie Sessie hieronder).</li>
+    </ul>
+  </section>
+
+  <section id="verbinding">
+    <h2>Verbinding met de echte UR5e</h2>
+    <h3>Lokaal versus Op afstand</h3>
+    <p><b>Lokaal</b> — deze pc is de vaste laptop die bekabeld aan de robot hangt en zelf <code>ur5-bridge.js</code> draait. Standaardadres <code>ws://localhost:9090</code>.</p>
+    <p><b>Op afstand</b> — deze pc stuurt de robot niet zelf aan, maar verbindt via het netwerk met de vaste laptop elders. Vul het adres van díe laptop in (bijvoorbeeld een Tailscale-adres), nooit <code>localhost</code>. Wordt deze pagina via <code>https://</code> geopend, dan moet het adres met <code>wss://</code> beginnen — anders blokkeert de browser de verbinding (dit heet "mixed content"). De twin onthoudt het laatst gebruikte externe adres.</p>
+
+    <h3>Pose sturen</h3>
+    <p>Met <b>Twin volgt robot</b> aangevinkt volgt de simulatie automatisch de bewegingen van de echte robot. Kies je zelf een pose (slider, preset, of vrije stand), dan koppelt de twin zich vanzelf los — anders zou de robot je wijziging meteen weer overschrijven.</p>
+
+    <h3>Robotbeheer</h3>
+    <p><b>Remmen los / Robot uit / Status</b> sturen dashboardcommando's. <b>Freedrive AAN/UIT</b> zet de robot in de stand waarin je 'm met de hand kunt verplaatsen — handig om een pose op te nemen zonder de pendant te gebruiken.</p>
+
+    <h3>Programma op de robot afspelen</h3>
+    <p>Speelt de opgebouwde stappenreeks écht op de fysieke robot af. Grijperacties verlopen via twee kant-en-klare programma's die je eenmalig op de pendant aanmaakt en opslaat (zie het werkdocument voor de precieze stappen) — de bestandsnamen vul je hier in.</p>
+  </section>
+
+  <section id="sessie">
+    <h2>Sessie opslaan/laden</h2>
+    <p>Bewaart in één bestand: montagehoogte, TCP-lengte, alle geladen omgevingsmodellen (inclusief de volledige geometrie zelf, niet alleen een verwijzing), alle dozen met hun exacte afmeting/positie, en het complete programma.</p>
+    <p>Dit is de snelste manier om een complete proefopstelling te bewaren en later — of door een collega — in één keer terug te laden. Omdat de 3D-modellen zelf mee opgeslagen worden, hoef je het originele CAD-bestand niet apart te delen.</p>
+  </section>
+
+  <section id="veiligheid">
+    <h2>Veiligheid</h2>
+    <div class="veiligheid">
+      <p><b>Bij de echte robot:</b></p>
+      <ul>
+        <li>Begin altijd met een snelheid van ≤ 25%.</li>
+        <li>Controleer elke nieuwe pose eerst in de simulatie voordat je 'm op de robot uitvoert.</li>
+        <li>Houd de noodstop binnen handbereik, ook bij kleine bewegingen.</li>
+        <li>Bij bediening op afstand: zorg dat er altijd iemand fysiek bij de robot aanwezig is als toezicht, met directe toegang tot de noodstop.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer>het echte werk</footer>
+
+</body>
+</html>
