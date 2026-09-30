@@ -1,6 +1,8 @@
 {
   "dependencies": {
     "modbus-serial": "^8.0.25",
+    "node-snap7": "^1.0.9",
+    "nodes7": "^0.3.18",
     "ws": "^8.22.0"
   }
 }
