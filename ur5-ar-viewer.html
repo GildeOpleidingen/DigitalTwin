@@ -5,34 +5,60 @@
 <title>UR5e AR-viewer — HoloLens 2</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root{ --bg:#0d1117; --panel:#161b22; --line:#2a3038; --text:#e6edf3; --muted:#8b98a5; --ok:#3fb950; --err:#f85149; --accent:#58a6ff; }
+  :root{
+    --bg:#12161D; --paneel:#1A2028; --lijn:#2A3340; --tekst:#E8ECF2; --gedempt:#8B95A5;
+    --accent:#E6007E; --ur:#5AB8D4; --ok:#3ECF8E; --err:#FF5C5C; --warn:#F5A623;
+  }
   *{box-sizing:border-box;}
-  html,body{margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,Segoe UI,Arial,sans-serif;}
+  html,body{margin:0; height:100%; background:var(--bg); color:var(--tekst); font-family:system-ui,Segoe UI,Arial,sans-serif;}
   #ui{
     position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
-    justify-content:center; gap:14px; padding:24px; text-align:center;
+    justify-content:flex-start; gap:0; padding:32px 20px 60px; text-align:center; overflow-y:auto;
   }
-  h1{font-size:20px; font-weight:600; margin:0;}
-  p{color:var(--muted); font-size:14px; line-height:1.6; max-width:440px; margin:0;}
+  .kop{ display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  .badge{
+    background:var(--accent); color:#fff; font-weight:800; font-size:15px;
+    border-radius:8px; padding:8px 13px; letter-spacing:0.5px;
+  }
+  h1{font-size:20px; font-weight:700; margin:0; text-align:left;}
+  .ondertitel{color:var(--gedempt); font-size:13px; text-align:left; margin-top:2px;}
+  p{color:var(--gedempt); font-size:14px; line-height:1.6; max-width:460px; margin:0;}
+  .stappen{
+    display:flex; flex-direction:column; gap:10px; max-width:460px; width:100%;
+    margin:22px 0 26px; text-align:left;
+  }
+  .stap{
+    display:flex; gap:14px; align-items:flex-start; background:var(--paneel);
+    border:1px solid var(--lijn); border-radius:10px; padding:14px 16px;
+  }
+  .stap-icoon{ font-size:24px; line-height:1; flex-shrink:0; width:30px; text-align:center; }
+  .stap-tekst b{ color:var(--tekst); font-size:14px; display:block; margin-bottom:2px; }
+  .stap-tekst span{ color:var(--gedempt); font-size:13px; line-height:1.5; }
+  .verbind-sectie{
+    max-width:460px; width:100%; background:var(--paneel); border:1px solid var(--lijn);
+    border-radius:10px; padding:18px; margin-bottom:16px;
+  }
+  .verbind-sectie h2{ font-size:13px; color:var(--gedempt); text-transform:uppercase; letter-spacing:0.5px; margin:0 0 12px; text-align:left; font-weight:700;}
   #status{
-    font-family:'Consolas',monospace; font-size:13px; background:var(--panel);
-    border:1px solid var(--line); border-radius:8px; padding:12px 16px; max-width:440px;
-    white-space:pre-wrap; text-align:left;
+    font-family:'Consolas',monospace; font-size:13px; background:var(--bg);
+    border:1px solid var(--lijn); border-radius:8px; padding:12px 16px; max-width:460px;
+    white-space:pre-wrap; text-align:left; margin-top:12px; width:100%;
   }
   .err{color:var(--err);}
   input{
-    background:var(--panel); border:1px solid var(--line); color:var(--text);
-    border-radius:6px; padding:8px 12px; font-family:Consolas,monospace; font-size:13px; width:280px;
+    background:var(--bg); border:1px solid var(--lijn); color:var(--tekst);
+    border-radius:6px; padding:9px 12px; font-family:Consolas,monospace; font-size:13px; width:100%;
   }
   button{
-    background:var(--accent); color:#04101f; border:none; border-radius:8px;
-    padding:12px 28px; font-size:15px; font-weight:600; cursor:pointer;
+    background:var(--accent); color:#fff; border:none; border-radius:8px;
+    padding:13px 28px; font-size:15px; font-weight:700; cursor:pointer;
   }
-  button.klein{ padding:8px 16px; font-size:13px; }
+  button.klein{ padding:9px 16px; font-size:13px; white-space:nowrap; }
   button:disabled{opacity:0.4; cursor:default;}
+  #startBtn{ max-width:460px; width:100%; }
   #exitBtn{
     position:fixed; top:16px; right:16px; z-index:10; display:none;
-    background:var(--panel); color:var(--text); border:1px solid var(--line);
+    background:var(--paneel); color:var(--tekst); border:1px solid var(--lijn);
   }
   canvas{position:fixed; inset:0; display:block;}
 </style>
@@ -40,13 +66,43 @@
 <body>
 
 <div id="ui">
-  <h1>UR5e AR-viewer</h1>
-  <p>Verbindt met de bridge en toont de live robotstand als een 3D-staafpoppetje in de echte ruimte. Knijp (air-tap-en-vasthouden) bij de voet van het poppetje om het te verslepen naar de echte robotpositie.</p>
-  <div style="display:flex; gap:8px; align-items:center;">
-    <input id="bridgeAdres" placeholder="wss://adres-van-de-vaste-laptop:9090" spellcheck="false">
-    <button class="klein" id="verbindBtn">Verbind</button>
+  <div class="kop">
+    <div class="badge">UR</div>
+    <div>
+      <h1>Digital Twin — AR</h1>
+      <div class="ondertitel">UR5e in de echte ruimte — kalibreren, aansturen, programmeren</div>
+    </div>
   </div>
-  <div id="status">nog niet gecontroleerd…</div>
+
+  <div class="stappen">
+    <div class="stap">
+      <div class="stap-icoon">🟡</div>
+      <div class="stap-tekst"><b>1. Zet de robot op zijn plek</b><span>Knijp bij het gele bolletje aan de voet (duim en vinger samen, zoals iets oppakken) en versleep het naar de positie van de echte robot.</span></div>
+    </div>
+    <div class="stap">
+      <div class="stap-icoon">🩷</div>
+      <div class="stap-tekst"><b>2. Bepaal de houding</b><span>Knijp het roze TCP-punt vast om de robot te positioneren. Pak er tegelijk met je andere hand een gewricht bij om de invalshoek te bepalen.</span></div>
+    </div>
+    <div class="stap">
+      <div class="stap-icoon">📋</div>
+      <div class="stap-tekst"><b>3. Bouw een programma</b><span>Het zwevende paneel volgt je niet automatisch — pak het vast bij de streepjesbalk om het ergens handigs neer te zetten. De knoppen erop nemen posities op, spelen ze af, en sturen ze — na bevestiging — naar de echte robot.</span></div>
+    </div>
+    <div class="stap">
+      <div class="stap-icoon">🤏</div>
+      <div class="stap-tekst"><b>Alles werkt met dezelfde knijpbeweging</b><span>Geen echt duwen of poken nodig — overal waar je iets "indrukt" of "vastpakt", is het dezelfde pinch: duim en vinger samen, dan weer los.</span></div>
+    </div>
+  </div>
+
+  <div class="verbind-sectie">
+    <h2>Verbinding met de robot</h2>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <input id="bridgeAdres" placeholder="wss://adres-van-de-vaste-laptop:9090" spellcheck="false">
+      <button class="klein" id="verbindBtn">Verbind</button>
+    </div>
+    <div id="bridgeStatus" class="ondertitel" style="margin-top:10px">nog niet verbonden</div>
+    <div id="status">nog niet gecontroleerd…</div>
+  </div>
+
   <button id="startBtn" disabled>AR starten</button>
 </div>
 <button id="exitBtn">AR verlaten</button>
@@ -58,12 +114,26 @@ const startBtn = document.getElementById("startBtn");
 const exitBtn = document.getElementById("exitBtn");
 const bridgeAdresVeld = document.getElementById("bridgeAdres");
 const verbindBtn = document.getElementById("verbindBtn");
+const bridgeStatusEl = document.getElementById("bridgeStatus");
 
 bridgeAdresVeld.value = localStorage.getItem("ar_bridge_adres") || "";
 
 function zetStatus(regels, isFout){
   statusEl.innerHTML = regels.map(r => "<div>" + r + "</div>").join("");
   statusEl.className = isFout ? "err" : "";
+}
+
+/* De oude #status-box hierboven was al bezet door de immersive-ar-
+   ondersteuningscheck (die draait één keer bij het laden) — klikken op
+   "Verbind" liet daar dus nooit iets van zien, ook niet als het lukte.
+   Losse, duidelijke regel speciaal voor de bridge-verbinding, zichtbaar
+   VOORDAT je de headset opzet (en de tekst blijft ook straks in de AR-
+   HUD terugkomen via dezelfde bridgeStatusTekst-variabele).            */
+function zetBridgeStatus(tekst, isFout){
+  bridgeStatusTekst = tekst;
+  if(!bridgeStatusEl) return;
+  bridgeStatusEl.textContent = "Bridge: " + tekst;
+  bridgeStatusEl.style.color = isFout ? "var(--err)" : (tekst === "verbonden" ? "var(--ok)" : "var(--gedempt)");
 }
 
 let arOndersteund = false;
@@ -89,21 +159,60 @@ function verbindMetBridge(){
   if(!adres) return;
   localStorage.setItem("ar_bridge_adres", adres);
   if(ws) ws.close();
-  bridgeStatusTekst = "verbinden …";
+  zetBridgeStatus("verbinden …");
   try{ ws = new WebSocket(adres); }
-  catch(err){ bridgeStatusTekst = "ongeldig adres: " + err.message; return; }
-  ws.onopen = () => { bridgeStatusTekst = "verbonden"; };
-  ws.onclose = () => { bridgeStatusTekst = "verbinding verbroken"; };
-  ws.onerror = () => { bridgeStatusTekst = "verbindingsfout"; };
+  catch(err){ zetBridgeStatus("ongeldig adres: " + err.message, true); return; }
+  ws.onopen = () => { zetBridgeStatus("verbonden"); };
+  ws.onclose = () => { zetBridgeStatus("verbinding verbroken", true); };
+  ws.onerror = () => { zetBridgeStatus("verbindingsfout — klopt het adres, en draait de bridge?", true); };
   ws.onmessage = ev => {
     let msg; try{ msg = JSON.parse(ev.data); } catch{ return; }
     if(msg.type === "joints" && Array.isArray(msg.q)){
       q = msg.q.map(r => r*180/Math.PI);
       nieuweBridgePose = true;
     }
+    if(msg.type === "io"){
+      if(Array.isArray(msg.standaardIn))  ioStandaardIn  = msg.standaardIn;
+      if(Array.isArray(msg.standaardUit)) ioStandaardUit = msg.standaardUit;
+      if(Array.isArray(msg.extensieIn))   ioExtensieIn   = msg.extensieIn;
+      if(Array.isArray(msg.extensieUit))  ioExtensieUit  = msg.extensieUit;
+      ioOntvangen = true;
+    }
+    /* De bridge zendt dit naar ALLE aangesloten clients zodra de grijper
+       ergens vandaan (de gewone twin, een programmastap, …) daadwerkelijk
+       van stand is veranderd — niet alleen als antwoord op je eigen
+       AR-knop. Zonder dit hier te verwerken bleef grijperOpenTest hier
+       stil staan op de laatst zelf-ingestelde waarde, ook als de échte
+       grijper via een ander kanaal open of dicht ging: precies het
+       gemelde verschil tussen de AR-weergave en de simulatie/laptop.
+       Zelfde regel als bij het volgen van de robotpose: tijdens "LOS"
+       (volgtRobot = false) negeren we dit, want dan ben je bewust een
+       eigen programma aan het opbouwen zonder dat de live robot dat
+       overschrijft.                                                    */
+    if(msg.type === "grijperstatus" && typeof msg.open === "boolean" && volgtRobot){
+      grijperOpenTest = msg.open;
+    }
   };
 }
 verbindBtn.addEventListener("click", verbindMetBridge);
+
+/* ------------------ Digitale I/O: standaard + extension bus ------------------
+   Zelfde bridge-berichten ("io"/"ioCommando") als de desktop-twin — hier
+   alleen weergegeven/bediend via een los HUD-scherm (te veel om samen met
+   de programmaknoppen op één paneel te passen). null = nog geen data
+   ontvangen (bijv. nog niet verbonden).                                 */
+let ioStandaardIn = null, ioStandaardUit = null, ioExtensieIn = null, ioExtensieUit = null;
+let ioOntvangen = false;
+let hudWeergave = "programma";   // "programma" (de normale 3x3-knoppen) of "io" (extension-bus-scherm)
+
+/* Standaard volgt de AR-arm continu de live robotpose van de bridge (zoals
+   voorheen, zonder uitschakeloptie). Dat maakt het onmogelijk om los een
+   programma op te bouwen terwijl je verbonden bent: elke binnenkomende
+   robot-pose overschreef je eigen sleepwerk zodra je losliet. Met deze
+   schakelaar (zelfde idee als "Twin volgt robot" in de gewone twin) kun
+   je het volgen tijdelijk uitzetten, vrij programmeren, en het daarna
+   weer aanzetten (of gewoon "→ ROBOT" gebruiken om te versturen).       */
+let volgtRobot = true;
 
 /* ------------------ mat4/vec3-hulpfuncties ------------------ */
 function matIdentiteit(){ return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
@@ -199,14 +308,22 @@ function matInverteerN(A){
    (TCP + ellebooggewricht tegelijk, voor het bepalen van de invalshoek).
    doelen: [{index, positie}, ...] — index wijst naar de plek in de reeks
    die forwardKinematica teruggeeft (8 = TCP, 3 = elleboog, enz.).       */
+/* Restfout van de laatste losIKOp(Meerdere)-aanroep: de grootste afstand
+   tussen een gevraagd doelpunt en waar dat punt daadwerkelijk terechtkwam.
+   Gebruikt door de AR-viewer om een niet (volledig) haalbare houding te
+   signaleren — puur diagnostisch, verandert het IK-gedrag zelf niet.    */
+let laatsteIKRestfout = 0;
+
 function losIKOpMeerdere(qGradenStart, doelen, ankerMatrix, iteraties=8){
   let q = qGradenStart.slice();
   const n = doelen.length * 3;
+  let laatsteFout = null;
   for(let iter=0; iter<iteraties; iter++){
     const matricesNu = forwardKinematica(q, ankerMatrix);
     const huidigePosities = doelen.map(d => positieVan(matricesNu[d.index]));
     const fout = [];
     doelen.forEach((d,k) => fout.push(...vecAftrekken(d.positie, huidigePosities[k])));
+    laatsteFout = fout;
     if(doelen.length === 1 && vecLengte(fout) < 0.0005) break;
 
     const J = [];
@@ -239,6 +356,15 @@ function losIKOpMeerdere(qGradenStart, doelen, ankerMatrix, iteraties=8){
       q[i] += dq;
     }
   }
+  /* restfout na de laatste iteratie herberekenen (niet de fout van vóór de
+     laatste stap) — grootste afstand over alle doelpunten tegelijk.      */
+  const matricesEind = forwardKinematica(q, ankerMatrix);
+  let grootsteFout = 0;
+  doelen.forEach((d,k) => {
+    const behaald = positieVan(matricesEind[d.index]);
+    grootsteFout = Math.max(grootsteFout, afstand(d.positie, behaald));
+  });
+  laatsteIKRestfout = grootsteFout;
   return q;
 }
 function losIKOp(qGradenStart, doelPositie, ankerMatrix, iteraties=8){
@@ -280,19 +406,37 @@ function forwardKinematica(qDeg, ankerMatrix){
 }
 
 /* ------------------ WebGL: blokjes (gewrichten) en botjes (segmenten) ------------------ */
-let gl, session, refSpace, programma, aPosLoc, aNormaalLoc, uMvpLoc, uModelLoc, uKleurLoc;
+let gl, session, refSpace, programma, aPosLoc, aNormaalLoc, uMvpLoc, uModelLoc, uKleurLoc, uCameraPosLoc, uGlansLoc, uAlphaLoc;
+let huidigeCameraPos = [0,0,0];   // per view bijgewerkt, voor de specular-berekening in de shader
 let hudProgramma, hudQuadBuf, hudUvBuf, hudAPosLoc, hudAUvLoc, hudUMvpLoc, hudUTexLoc;
 let hudCanvas2d, hudCtx2d, hudTexture;
-const PANEEL_BREEDTE = 0.32, PANEEL_HOOGTE = 0.20;   // fysieke afmeting van het paneel (m)
-const HUD_BREEDTE_PX = 640, HUD_HOOGTE_PX = 400;      // canvas-textuurgrootte
+const PANEEL_BREEDTE = 0.34, PANEEL_HOOGTE = 0.32;   // fysieke afmeting van het paneel (m) — iets hoger voor de derde knoppenrij
+const HUD_BREEDTE_PX = 680, HUD_HOOGTE_PX = 640;      // canvas-textuurgrootte
 let hudKnoppen = [];             // {naam, label, x,y,w,h} in canvas-pixels, elk frame opnieuw opgebouwd
+let hudSleepbalk = null;         // rect van de streepjesbalk — enige plek die het paneel laat verslepen
 let hudKnopVorigeStatus = null;  // welke knop was VORIG frame aangeraakt — voorkomt herhaald afvuren
 
 /* ---- programma: opgeslagen houdingen + afspelen ---- */
 let programmaStappen = [];       // elk: {q:[...], open:bool}
 let afspelenActief = false, afspelenIndex = 0, afspelenStartTijd = 0;
-const AFSPEEL_DUUR_MS = 1400;
-let grijperOpenTest = true;      // losse, lokale grijperstand voor het opnemen/tonen (geen echte hardware hier)
+/* afspeeltempo: instelbaar via de TEMPO-knop, cyclisch door drie presets */
+const AFSPEEL_TEMPOS = [700, 1400, 2800];         // ms per stap: snel, normaal, langzaam
+const AFSPEEL_TEMPO_LABELS = ["SNEL", "NORMAAL", "LANGZAAM"];
+let afspeelTempoIdx = 1;
+function afspeelDuurMs(){ return AFSPEEL_TEMPOS[afspeelTempoIdx]; }
+let grijperOpenTest = true;      // grijperstand die wordt opgenomen; stuurt ook de echte grijper aan indien verbonden
+let robotSturenGewapend = false; // "→ Robot" moet twee keer worden ingedrukt: eerst wapenen, dan pas echt versturen
+let robotSturenWapendTot = 0;
+let wissenGewapend = false;      // "WISSEN" moet, net als "→ Robot", eerst gewapend en dan bevestigd worden
+let wissenWapendTot = 0;
+let helpZichtbaar = false;       // toont een korte herinnering van de gebaren i.p.v. de live status
+/* ---- losse waypoints beheren: door het programma bladeren en een enkel
+   punt verwijderen, zonder alles te moeten wissen ---- */
+let waypointSelectie = null;     // index in programmaStappen die nu "in beeld" staat, of null
+/* ---- onbereikbaar-feedback: laatste IK-restfout (m), voor een duidelijk
+   signaal als een versleept punt niet (volledig) haalbaar is ---- */
+let ikFoutAfstand = 0;
+const ONBEREIKBAAR_DREMPEL = 0.03;   // 3 cm rest-afstand geldt als "niet bereikt"
 
 /* ------------------ WebGL: vormen (kubus/cilinder/bol) met belichting ------------------ */
 const vormen = {};   // vormen.kubus / .cilinder / .bol = {buf, normBuf, idxBuf, aantal}
@@ -371,23 +515,40 @@ function bouwGeometrie(){
     attribute vec3 aPos; attribute vec3 aNormaal;
     uniform mat4 uMvp; uniform mat4 uModel;
     varying vec3 vNormaalWereld;
+    varying vec3 vPositieWereld;
     void main(){
       gl_Position = uMvp * vec4(aPos,1.0);
       vNormaalWereld = mat3(uModel) * aNormaal;
+      vPositieWereld = (uModel * vec4(aPos,1.0)).xyz;
     }`);
   gl.compileShader(vs);
   const fs = gl.createShader(gl.FRAGMENT_SHADER);
   gl.shaderSource(fs, `
     precision mediump float;
     varying vec3 vNormaalWereld;
+    varying vec3 vPositieWereld;
     uniform vec3 uKleur;
+    uniform vec3 uCameraPos;
+    uniform float uGlans;    // 0 = mat, hoger = glanzender hoogepunt
+    uniform float uAlpha;
     void main(){
       vec3 n = normalize(vNormaalWereld);
-      vec3 lichtRichting = normalize(vec3(0.4, 0.8, 0.5));
-      float diffuus = max(dot(n, lichtRichting), 0.0);
-      float rimlicht = pow(1.0 - abs(n.z), 2.0) * 0.15;   // subtiel randlicht, oogt minder plat
-      vec3 kleur = uKleur * (0.42 + 0.58*diffuus) + rimlicht;
-      gl_FragColor = vec4(kleur, 1.0);
+      vec3 kijkRichting = normalize(uCameraPos - vPositieWereld);
+
+      /* twee lichten: hoofdlicht schuin-boven-voor, een zwakker vullicht
+         van de andere kant — voorkomt dat één zijde helemaal donker blijft. */
+      vec3 licht1 = normalize(vec3(0.45, 0.85, 0.55));
+      vec3 licht2 = normalize(vec3(-0.55, 0.25, -0.6));
+      float diffuus1 = max(dot(n, licht1), 0.0);
+      float diffuus2 = max(dot(n, licht2), 0.0) * 0.30;
+
+      vec3 halfweg = normalize(licht1 + kijkRichting);
+      float specHoek = max(dot(n, halfweg), 0.0);
+      float specular = (uGlans > 0.5) ? pow(specHoek, uGlans) * 0.65 : 0.0;
+
+      float rimlicht = pow(1.0 - max(dot(n, kijkRichting), 0.0), 2.0) * 0.10;
+      vec3 kleur = uKleur * (0.36 + 0.50*diffuus1 + 0.18*diffuus2) + rimlicht + vec3(specular);
+      gl_FragColor = vec4(kleur, uAlpha);
     }`);
   gl.compileShader(fs);
   programma = gl.createProgram();
@@ -398,13 +559,16 @@ function bouwGeometrie(){
   uMvpLoc = gl.getUniformLocation(programma, "uMvp");
   uModelLoc = gl.getUniformLocation(programma, "uModel");
   uKleurLoc = gl.getUniformLocation(programma, "uKleur");
+  uCameraPosLoc = gl.getUniformLocation(programma, "uCameraPos");
+  uGlansLoc = gl.getUniformLocation(programma, "uGlans");
+  uAlphaLoc = gl.getUniformLocation(programma, "uAlpha");
 
   vormen.kubus = bouwVormBuffer(bouwKubusData());
-  vormen.cilinder = bouwVormBuffer(bouwCilinderData(20));
-  vormen.bol = bouwVormBuffer(bouwBolData(16,12));
+  vormen.cilinder = bouwVormBuffer(bouwCilinderData(28));
+  vormen.bol = bouwVormBuffer(bouwBolData(20,14));
 }
 
-function tekenVorm(viewMatrix, projMatrix, modelMatrix, kleur, vorm){
+function tekenVorm(viewMatrix, projMatrix, modelMatrix, kleur, vorm, glans=4, alpha=1){
   const v = vormen[vorm];
   const mvp = matVermenigvuldig(projMatrix, matVermenigvuldig(viewMatrix, modelMatrix));
   gl.useProgram(programma);
@@ -418,14 +582,17 @@ function tekenVorm(viewMatrix, projMatrix, modelMatrix, kleur, vorm){
   gl.uniformMatrix4fv(uMvpLoc, false, mvp);
   gl.uniformMatrix4fv(uModelLoc, false, modelMatrix);
   gl.uniform3fv(uKleurLoc, kleur);
+  gl.uniform3fv(uCameraPosLoc, huidigeCameraPos);
+  gl.uniform1f(uGlansLoc, glans);
+  gl.uniform1f(uAlphaLoc, alpha);
   gl.drawElements(gl.TRIANGLES, v.aantal, gl.UNSIGNED_SHORT, 0);
 }
 /* oude naam blijft werken voor bestaande aanroepen (kubus, zoals voorheen) */
 function tekenMet(viewMatrix, projMatrix, modelMatrix, kleur){ tekenVorm(viewMatrix, projMatrix, modelMatrix, kleur, "kubus"); }
 
-function tekenGewricht(viewMatrix, projMatrix, positie, kleur, straal=0.032){
+function tekenGewricht(viewMatrix, projMatrix, positie, kleur, straal=0.032, glans=4){
   const model = matVermenigvuldig(matTranslatie(...positie), matSchaal(straal));
-  tekenVorm(viewMatrix, projMatrix, model, kleur, "bol");
+  tekenVorm(viewMatrix, projMatrix, model, kleur, "bol", glans);
 }
 function matSchaal(s){ const m = matIdentiteit(); m[0]=s; m[5]=s; m[10]=s; return m; }
 function matSchaalXYZ(sx,sy,sz){ const m = matIdentiteit(); m[0]=sx; m[5]=sy; m[10]=sz; return m; }
@@ -435,7 +602,76 @@ function matSchaalXYZ(sx,sy,sz){ const m = matIdentiteit(); m[0]=sx; m[5]=sy; m[
    als de andere gewrichten.                                          */
 function tekenVoet(viewMatrix, projMatrix, positie, kleur){
   const model = matVermenigvuldig(matVermenigvuldig(matTranslatie(...positie), matRotatieX(H90)), matSchaalXYZ(0.0755, 0.0755, 0.018));
-  tekenVorm(viewMatrix, projMatrix, model, kleur, "cilinder");
+  tekenVorm(viewMatrix, projMatrix, model, kleur, "cilinder", 8);
+}
+
+/* Zachte, halfdoorzichtige schaduwvlek recht onder de voet — geeft het
+   gevoel dat de robot echt op de grond "staat" i.p.v. te zweven.      */
+function tekenSchaduw(viewMatrix, projMatrix, voetPositie){
+  const schaduwPositie = [voetPositie[0], voetPositie[1]-0.005, voetPositie[2]];
+  const model = matVermenigvuldig(matVermenigvuldig(matTranslatie(...schaduwPositie), matRotatieX(H90)), matSchaalXYZ(0.14, 0.14, 0.001));
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthMask(false);
+  tekenVorm(viewMatrix, projMatrix, model, [0,0,0], "cilinder", 0, 0.28);
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+}
+
+/* Tekent een cilinder in het LOKALE assenstelsel van een gewricht — exact
+   dezelfde constructie als de desktop-twin's cyl()-helper met een lokale
+   .position, alleen dan met een expliciete gewrichtsmatrix in plaats van
+   een Three.js-oudergroep. as="z" (standaard, geen extra rotatie nodig
+   want mijn cilindergeometrie ligt al langs lokale Z) of as="x" (roteert
+   90° om Y, voor de armsegmenten die in de twin langs lokale X liggen). */
+function tekenLokaleCilinder(viewMatrix, projMatrix, gewrichtMatrix, offset, r, h, kleur, as, glans=4){
+  const offsetM = as === "x" ? matTranslatie(offset,0,0) : matTranslatie(0,0,offset);
+  let lokaal = offsetM;
+  if(as === "x") lokaal = matVermenigvuldig(offsetM, matRotatieY(H90));
+  const model = matVermenigvuldig(matVermenigvuldig(gewrichtMatrix, lokaal), matSchaalXYZ(r, r, h/2));
+  tekenVorm(viewMatrix, projMatrix, model, kleur, "cilinder", glans);
+}
+function tekenRing(viewMatrix, projMatrix, gewrichtMatrix, r, kleur){
+  tekenLokaleCilinder(viewMatrix, projMatrix, gewrichtMatrix, 0, r+0.0025, 0.013, kleur, "z", 34);
+}
+
+/* De volledige arm, gewricht voor gewricht — exact dezelfde stralen,
+   hoogtes en offsets als de desktop-twin (aab3bc lichaam, 454e59 kappen,
+   5ab8d4 cyaan ringen, 2b323c donker), zodat dit herkenbaar dezelfde
+   robot is i.p.v. een eigen vereenvoudigd ontwerp.                     */
+const KL_BODY = [0.667,0.702,0.737], KL_CAP = [0.271,0.306,0.349], KL_RING = [0.353,0.722,0.831], KL_DARK = [0.169,0.196,0.235];
+function tekenRobotArm(viewMatrix, projMatrix, matrices){
+  const [mBasis, mJ1, mJ2, mJ3, mJ4, mJ5, mJ6] = matrices;
+  const D1=0.1625, A2=0.425, A3=0.3922, D4=0.1333, D5=0.0997, D6=0.0996;
+
+  // J1: voet + kolom
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ1, 0.019, 0.078, 0.038, KL_DARK, "z");
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ1, 0.038+(D1-0.05)/2, 0.062, D1-0.05, KL_BODY, "z");
+
+  // J2: schouderkap + bovenarm
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ2, 0, 0.060, 0.135, KL_CAP, "z", 16);
+  tekenRing(viewMatrix, projMatrix, mJ2, 0.060, KL_RING);
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ2, -A2/2, 0.046, A2-0.09, KL_BODY, "x");
+
+  // J3: elleboogkap + onderarm
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ3, 0, 0.050, 0.115, KL_CAP, "z", 16);
+  tekenRing(viewMatrix, projMatrix, mJ3, 0.050, KL_RING);
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ3, -A3/2, 0.038, A3-0.08, KL_BODY, "x");
+
+  // J4: pols 1
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ4, 0, 0.042, 0.095, KL_CAP, "z", 16);
+  tekenRing(viewMatrix, projMatrix, mJ4, 0.042, KL_RING);
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ4, D4/2, 0.031, D4-0.06, KL_BODY, "z");
+
+  // J5: pols 2
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ5, 0, 0.042, 0.095, KL_CAP, "z", 16);
+  tekenRing(viewMatrix, projMatrix, mJ5, 0.042, KL_RING);
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ5, D5/2, 0.031, D5-0.055, KL_BODY, "z");
+
+  // J6: pols 3 + flens
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ6, 0, 0.038, 0.06, KL_CAP, "z", 16);
+  tekenRing(viewMatrix, projMatrix, mJ6, 0.038, KL_RING);
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ6, 0.03+(D6-0.04)/2, 0.031, D6-0.04, KL_BODY, "z");
+  tekenLokaleCilinder(viewMatrix, projMatrix, mJ6, D6-0.012, 0.036, 0.012, KL_DARK, "z");
 }
 
 function tekenSegment(viewMatrix, projMatrix, a, b, dikte, kleur){
@@ -468,24 +704,27 @@ function matVanBasis(rechts, omhoog, voor, positie, sx, sy, sz){
   ]);
 }
 
-/* eenvoudige parallelgrijper — palm + twee vingers — op de exacte
-   flensoriëntatie, zodat hij altijd de juiste kant op wijst.         */
-function tekenGrijper(viewMatrix, projMatrix, flensMatrix){
+/* Parallelgrijper — exact dezelfde maten als de desktop-twin (palm
+   0,072×0,05×0,034m, vingers 0,012×0,026×0,051m, open/dicht-opening
+   0,033m/0,010m), zodat de verhoudingen hier herkenbaar hetzelfde
+   zijn. De vingers bewegen nu ook echt open/dicht i.p.v. vast te staan. */
+const GRIJPER_VINGER_OPEN = 0.033, GRIJPER_VINGER_DICHT = 0.010;
+function tekenGrijper(viewMatrix, projMatrix, flensMatrix, open){
   const rechts = [flensMatrix[0], flensMatrix[1], flensMatrix[2]];
   const omhoog = [flensMatrix[4], flensMatrix[5], flensMatrix[6]];
   const voor   = [flensMatrix[8], flensMatrix[9], flensMatrix[10]];
   const flensPos = positieVan(flensMatrix);
-  const kleurGrijper = [0.55,0.58,0.62];
+  const kleurGrijper = [0.42,0.45,0.50];
 
-  const palmAfstand = 0.022;
+  const palmAfstand = 0.017;
   const palmPos = vecOptellen(flensPos, vecSchalen(voor, palmAfstand));
-  tekenVorm(viewMatrix, projMatrix, matVanBasis(rechts, omhoog, voor, palmPos, 0.030, 0.022, 0.020), kleurGrijper, "kubus");
+  tekenVorm(viewMatrix, projMatrix, matVanBasis(rechts, omhoog, voor, palmPos, 0.036, 0.025, 0.017), kleurGrijper, "kubus", 10);
 
-  const vingerOpening = 0.018, vingerLengte = 0.028;
-  const vingerAfstand = palmAfstand + 0.020 + vingerLengte;
+  const vingerHalfLengte = 0.0255, vingerAfstand = 0.034 + vingerHalfLengte;
+  const vingerOpening = open ? GRIJPER_VINGER_OPEN : GRIJPER_VINGER_DICHT;
   for(const kant of [-1, 1]){
     const vingerPos = vecOptellen(vecOptellen(flensPos, vecSchalen(voor, vingerAfstand)), vecSchalen(rechts, kant*vingerOpening));
-    tekenVorm(viewMatrix, projMatrix, matVanBasis(rechts, omhoog, voor, vingerPos, 0.007, 0.013, vingerLengte), kleurGrijper, "kubus");
+    tekenVorm(viewMatrix, projMatrix, matVanBasis(rechts, omhoog, voor, vingerPos, 0.006, 0.013, vingerHalfLengte), kleurGrijper, "kubus", 10);
   }
 }
 
@@ -535,33 +774,256 @@ function bouwHudQuad(){
 /* Tekent de statusregels + drie knoppen, en bouwt tegelijk hudKnoppen op
    (canvas-pixelvlakken) zodat aanraaklogica en tekening altijd bij elkaar
    passen — één plek die bepaalt waar alles staat.                      */
+/* Zet het opgenomen AR-programma om naar het stappenformaat dat de bridge
+   al kent (zelfde formaat als de gewone twin gebruikt) — geverifieerd in
+   een losse Node-test voordat dit hier kwam, inclusief het lege-programma-
+   randgeval. De grijper wordt eerst expliciet in de beginstand gezet, nog
+   vóór de eerste beweging — veiliger dan aannemen dat de echte grijper
+   toevallig al goed staat.                                              */
+function bouwBridgeStappen(){
+  if(programmaStappen.length === 0) return [];
+  const stappen = [];
+  stappen.push({ soort:"grip", open: programmaStappen[0].open, omschrijving: "Grijper " + (programmaStappen[0].open?"openen":"sluiten") + " (beginstand)" });
+  let vorigeOpen = programmaStappen[0].open;
+  for(const wp of programmaStappen){
+    const rad = wp.q.map(d => (d*Math.PI/180).toFixed(4)).join(", ");
+    stappen.push({ soort:"move", script:"movej([" + rad + "], a=0.8, v=0.3)", omschrijving:"AR-waypoint" });
+    if(wp.open !== vorigeOpen){
+      stappen.push({ soort:"grip", open: wp.open, omschrijving: "Grijper " + (wp.open?"openen":"sluiten") });
+      vorigeOpen = wp.open;
+    }
+  }
+  return stappen;
+}
+
+function tekenAfgerondRechthoek(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y,   x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x,   y+h, r);
+  ctx.arcTo(x,   y+h, x,   y,   r);
+  ctx.arcTo(x,   y,   x+w, y,   r);
+  ctx.closePath();
+}
+
+/* Zelfde kleurenpalet en opbouw als de bestaande desktop-twin (bg #12161D,
+   lijn #2A3340, tekst #E8ECF2, gedempt #8B95A5, magenta-accent #E6007E,
+   UR-cyaan #5AB8D4) — zodat dit paneel er herkenbaar bij hoort i.p.v. een
+   los ontworpen los onderdeel te zijn.                                   */
 function tekenHudTekst(regels, geraakteKnop){
   const ctx = hudCtx2d;
-  ctx.fillStyle = "rgba(13,17,23,0.90)";
-  ctx.fillRect(0, 0, HUD_BREEDTE_PX, HUD_HOOGTE_PX);
-  ctx.strokeStyle = "#58a6ff"; ctx.lineWidth = 6;
-  ctx.strokeRect(3, 3, HUD_BREEDTE_PX-6, HUD_HOOGTE_PX-6);
-  ctx.fillStyle = "#e6edf3";
-  ctx.font = "bold 26px Consolas, monospace";
-  ctx.textBaseline = "top";
-  regels.forEach((regel, i) => ctx.fillText(regel, 20, 16 + i*32));
+  const KLEUR = { bg:"#12161D", paneel:"#1A2028", lijn:"#2A3340", tekst:"#E8ECF2", gedempt:"#8B95A5", accent:"#E6007E", ur:"#5AB8D4", warn:"#F5A623", ok:"#3ECF8E" };
 
-  hudKnoppen = [
-    { naam:"vastleggen", label:"+ Vastleggen" },
-    { naam:"afspelen",   label: afspelenActief ? "Stop" : "Afspelen" },
-    { naam:"wissen",     label:"Wissen" },
-  ];
-  const knopY = HUD_HOOGTE_PX - 90, knopH = 70, marge = 16;
-  const knopW = (HUD_BREEDTE_PX - marge*4) / 3;
-  hudKnoppen.forEach((k, i) => {
-    k.x = marge + i*(knopW+marge); k.y = knopY; k.w = knopW; k.h = knopH;
+  ctx.fillStyle = KLEUR.bg;
+  tekenAfgerondRechthoek(ctx, 0, 0, HUD_BREEDTE_PX, HUD_HOOGTE_PX, 18);
+  ctx.fill();
+  ctx.strokeStyle = KLEUR.lijn; ctx.lineWidth = 3;
+  tekenAfgerondRechthoek(ctx, 1.5, 1.5, HUD_BREEDTE_PX-3, HUD_HOOGTE_PX-3, 17);
+  ctx.stroke();
+
+  /* kopbalk: klein "UR"-batchje, zoals linksboven in de app zelf */
+  ctx.fillStyle = KLEUR.accent;
+  tekenAfgerondRechthoek(ctx, 20, 18, 44, 32, 7);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 17px Arial, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("UR", 42, 35);
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillStyle = KLEUR.gedempt;
+  ctx.font = "600 15px Arial, sans-serif";
+  ctx.fillText("DIGITAL TWIN — AR", 76, 24);
+
+  /* "?"-knop rechtsboven: zet de statuszone om naar een korte herinnering
+     van de gebaren, zodat je dit tijdens het gebruik kunt terugzien.     */
+  const helpX = HUD_BREEDTE_PX - 20 - 36, helpY = 16, helpMaat = 36;
+  const helpKnopData = { naam:"help", x:helpX, y:helpY, w:helpMaat, h:helpMaat, label:"?" };
+  ctx.fillStyle = helpZichtbaar ? KLEUR.accent : KLEUR.paneel;
+  tekenAfgerondRechthoek(ctx, helpX, helpY, helpMaat, helpMaat, 8);
+  ctx.fill();
+  ctx.strokeStyle = helpZichtbaar ? KLEUR.accent : KLEUR.lijn; ctx.lineWidth = 1.5;
+  tekenAfgerondRechthoek(ctx, helpX, helpY, helpMaat, helpMaat, 8);
+  ctx.stroke();
+  ctx.fillStyle = helpZichtbaar ? "#fff" : KLEUR.gedempt;
+  ctx.font = "bold 18px Arial, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("?", helpX + helpMaat/2, helpY + helpMaat/2 + 1);
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
+
+  /* "I/O"-knop: wisselt het hele paneel tussen de programmaknoppen en het
+     extension-bus-scherm — apart van "?" omdat het geen hulptekst toont
+     maar echt een ander scherm is (te veel om samen te tonen).          */
+  const ioBtnW = 46, ioBtnX = helpX - 8 - ioBtnW, ioBtnY = 16, ioBtnH = 36;
+  const ioToggleKnopData = { naam:"io_toggle", x:ioBtnX, y:ioBtnY, w:ioBtnW, h:ioBtnH, label:"I/O" };
+  const ioActief = hudWeergave === "io";
+  ctx.fillStyle = ioActief ? KLEUR.ur : KLEUR.paneel;
+  tekenAfgerondRechthoek(ctx, ioBtnX, ioBtnY, ioBtnW, ioBtnH, 8);
+  ctx.fill();
+  ctx.strokeStyle = ioActief ? KLEUR.ur : KLEUR.lijn; ctx.lineWidth = 1.5;
+  tekenAfgerondRechthoek(ctx, ioBtnX, ioBtnY, ioBtnW, ioBtnH, 8);
+  ctx.stroke();
+  ctx.fillStyle = ioActief ? "#0c1410" : KLEUR.gedempt;
+  ctx.font = "bold 13px Arial, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("I/O", ioBtnX + ioBtnW/2, ioBtnY + ioBtnH/2 + 1);
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
+
+  /* "VOLGT"/"LOS"-knop: zet het automatisch volgen van de live robotpose
+     aan/uit. UR-cyaan = volgt de robot (standaard), oranje = losgekoppeld
+     (je eigen sleepwerk blijft dan staan, ook als de robot beweegt).     */
+  const volgBtnW = 58, volgBtnX = ioBtnX - 8 - volgBtnW, volgBtnY = 16, volgBtnH = 36;
+  const volgKnopData = { naam:"volg_toggle", x:volgBtnX, y:volgBtnY, w:volgBtnW, h:volgBtnH, label: volgtRobot ? "VOLGT" : "LOS" };
+  ctx.fillStyle = volgtRobot ? KLEUR.paneel : KLEUR.warn;
+  tekenAfgerondRechthoek(ctx, volgBtnX, volgBtnY, volgBtnW, volgBtnH, 8);
+  ctx.fill();
+  ctx.strokeStyle = volgtRobot ? KLEUR.ur : KLEUR.warn; ctx.lineWidth = 1.5;
+  tekenAfgerondRechthoek(ctx, volgBtnX, volgBtnY, volgBtnW, volgBtnH, 8);
+  ctx.stroke();
+  ctx.fillStyle = volgtRobot ? KLEUR.ur : "#2a1c05";
+  ctx.font = "bold 12px Arial, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(volgKnopData.label, volgBtnX + volgBtnW/2, volgBtnY + volgBtnH/2 + 1);
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
+
+  ctx.strokeStyle = KLEUR.lijn; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(20, 62); ctx.lineTo(HUD_BREEDTE_PX-20, 62); ctx.stroke();
+
+  /* expliciete grijpbalk — duidelijk "hier pak je vast om te verslepen",
+     met zes puntjes zoals een sleepgreep, zodat er geen twijfel over is.
+     Dit is nu ook de ENIGE plek op het paneel die het slepen activeert —
+     de rest van het paneel (buiten de knoppen) doet bewust niets, zodat
+     een net-mis op een knop niet per ongeluk het paneel laat verslepen. */
+  const sleepbalkRect = { x:20, y:70, w:HUD_BREEDTE_PX-40, h:26 };
+  hudSleepbalk = sleepbalkRect;
+  ctx.fillStyle = KLEUR.paneel;
+  tekenAfgerondRechthoek(ctx, sleepbalkRect.x, sleepbalkRect.y, sleepbalkRect.w, sleepbalkRect.h, 6);
+  ctx.fill();
+  ctx.fillStyle = KLEUR.gedempt;
+  const stipMidX = HUD_BREEDTE_PX/2, stipMidY = 83;
+  for(let rij=-1; rij<=1; rij++) for(let kol=-3; kol<=3; kol+=2){
+    ctx.beginPath(); ctx.arc(stipMidX + kol*7, stipMidY + rij*6, 2, 0, Math.PI*2); ctx.fill();
+  }
+
+  hudKnoppen = [];
+  let wissenNu = false, robotNu = false, heeftSelectie = false;
+
+  if(hudWeergave === "io"){
+    /* ---------- Extension-bus-scherm: standaard + configureerbare I/O ----------
+       Zelfde bridge-berichten ("io"/"ioCommando") als de desktop-twin.
+       Alleen de UIT-rijen zijn aanraakbaar (in/uit wisselen); de IN-rijen
+       zijn puur weergave. null = nog geen data (bijv. niet verbonden).  */
+    ctx.font = "600 13px Arial, sans-serif";
+    ctx.fillStyle = KLEUR.gedempt;
+    ctx.fillText(ioOntvangen ? "Live digitale I/O" : "Nog geen I/O-data — verbonden met de bridge?", 20, 96);
+
+    const cellX0 = 118, cellGap = 6, cellH = 32;
+    const cellW = (HUD_BREEDTE_PX - cellX0 - 20 - 7*cellGap) / 8;
+    function tekenIoRij(y, label, waarden, klikbaarPrefix){
+      ctx.font = "600 12px Consolas, monospace";
+      ctx.fillStyle = KLEUR.gedempt;
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(label, 20, y + cellH/2);
+      for(let i=0; i<8; i++){
+        const cx = cellX0 + i*(cellW+cellGap);
+        const waarde = waarden ? waarden[i] : null;
+        const aan = waarde === true;
+        const onbekend = waarde === null || waarde === undefined;
+        const naam = klikbaarPrefix ? klikbaarPrefix + i : null;
+        const aangeraakt = naam && geraakteKnop === naam;
+        if(naam) hudKnoppen.push({ naam, x:cx, y, w:cellW, h:cellH, label:String(i), __ioCel:true });
+        /* aangeraakt (vastgehouden, nog niet losgelaten) krijgt voorrang op
+           de aan/uit-kleur — zelfde directe duw-feedback als de gewone
+           knoppen, anders lijkt een druk op een cel niets te doen totdat
+           je loslaat.                                                   */
+        ctx.fillStyle = aangeraakt ? KLEUR.accent : (aan ? KLEUR.ok : KLEUR.bg);
+        tekenAfgerondRechthoek(ctx, cx, y, cellW, cellH, 6);
+        ctx.fill();
+        ctx.strokeStyle = aangeraakt ? KLEUR.accent : (onbekend ? KLEUR.lijn : (aan ? KLEUR.ok : (klikbaarPrefix ? KLEUR.ur : KLEUR.lijn))); ctx.lineWidth = 1.5;
+        tekenAfgerondRechthoek(ctx, cx, y, cellW, cellH, 6);
+        ctx.stroke();
+        ctx.fillStyle = aangeraakt ? "#fff" : (onbekend ? KLEUR.gedempt : (aan ? "#0c1410" : KLEUR.tekst));
+        ctx.font = "bold 13px Consolas, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(String(i), cx + cellW/2, y + cellH/2 + 1);
+      }
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+    }
+
+    const rijGapIo = 12;
+    let y = 118;
+    tekenIoRij(y, "EXT IN (CI)",  ioExtensieIn,   null);              y += cellH + rijGapIo;
+    tekenIoRij(y, "EXT UIT (CO)", ioExtensieUit,  "io_extensieUit_"); y += cellH + rijGapIo;
+    tekenIoRij(y, "STD IN (DI)",  ioStandaardIn,  null);              y += cellH + rijGapIo;
+    tekenIoRij(y, "STD UIT (DO)", ioStandaardUit, "io_standaardUit_");
+
+    hudKnoppen.push({ naam:"io_terug", label:"◀ PROGRAMMA",
+      x:16, y:HUD_HOOGTE_PX-56-16, w:HUD_BREEDTE_PX-32, h:56 });
+  } else {
+    /* ---------- Normale programmaknoppen (zoals voorheen) ---------- */
+    ctx.font = "600 20px Consolas, monospace";
+    regels.forEach((regel, i) => {
+      const dubbelePuntIdx = regel.indexOf(":");
+      const y = 116 + i*30;
+      if(regel.startsWith("⚠")){
+        ctx.fillStyle = KLEUR.warn; ctx.font = "bold 20px Consolas, monospace";
+        ctx.fillText(regel, 22, y);
+        ctx.font = "600 20px Consolas, monospace";
+      } else if(dubbelePuntIdx > -1){
+        const label = regel.slice(0, dubbelePuntIdx+1), waarde = regel.slice(dubbelePuntIdx+1);
+        ctx.fillStyle = KLEUR.gedempt; ctx.fillText(label, 22, y);
+        ctx.fillStyle = KLEUR.ur; ctx.fillText(waarde, 22 + ctx.measureText(label).width, y);
+      } else {
+        ctx.fillStyle = KLEUR.tekst; ctx.fillText(regel, 22, y);
+      }
+    });
+
+    wissenNu = wissenGewapend && performance.now() < wissenWapendTot;
+    robotNu = robotSturenGewapend && performance.now() < robotSturenWapendTot;
+    heeftSelectie = waypointSelectie !== null && waypointSelectie < programmaStappen.length;
+    hudKnoppen.push(
+      /* rij 1: opname-instellingen */
+      { naam:"vastleggen", label:"+ VASTLEGGEN" },
+      { naam:"grijper",    label: "GRIJPER: " + (grijperOpenTest ? "OPEN" : "DICHT") },
+      { naam:"tempo",      label: "TEMPO: " + AFSPEEL_TEMPO_LABELS[afspeelTempoIdx] },
+      /* rij 2: programma-acties */
+      { naam:"afspelen",   label: afspelenActief ? "■ STOP" : "▶ AFSPELEN" },
+      { naam:"robot",      label: robotNu ? "BEVESTIG?" : "→ ROBOT" },
+      { naam:"wissen",     label: wissenNu ? "BEVESTIG?" : "WISSEN" },
+      /* rij 3: losse waypoints beheren */
+      { naam:"vorige",     label: "◀ PUNT" + (heeftSelectie ? " " + (waypointSelectie+1) : "") },
+      { naam:"volgende",   label: "PUNT ▶" + (heeftSelectie ? " " + (waypointSelectie+1) : "") },
+      { naam:"verwijder",  label: "✕ VERWIJDER" },
+    );
+    const marge = 16, knopH = 56, rijGap = 12;
+    const rij3Y = HUD_HOOGTE_PX - knopH - marge;
+    const rij2Y = rij3Y - rijGap - knopH;
+    const rij1Y = rij2Y - rijGap - knopH;
+    const knopBreedte = (HUD_BREEDTE_PX - marge*4) / 3;
+    [rij1Y, rij2Y, rij3Y].forEach((rijY, rijIdx) => {
+      for(let kol=0; kol<3; kol++){
+        const k = hudKnoppen[rijIdx*3 + kol];
+        k.x = marge + kol*(knopBreedte+marge); k.y = rijY; k.w = knopBreedte; k.h = knopH;
+      }
+    });
+  }
+
+  hudKnoppen.push(helpKnopData, ioToggleKnopData, volgKnopData);
+
+  hudKnoppen.forEach(k => {
+    if(k.naam === "help" || k.naam === "io_toggle" || k.naam === "volg_toggle" || k.__ioCel) return;   // al eigen styling gehad
     const aangeraakt = geraakteKnop === k.naam;
-    ctx.fillStyle = aangeraakt ? "#E6007E" : "#21262d";
-    ctx.strokeStyle = "#3a4048"; ctx.lineWidth = 2;
-    ctx.fillRect(k.x, k.y, k.w, k.h);
-    ctx.strokeRect(k.x, k.y, k.w, k.h);
-    ctx.fillStyle = "#e6edf3";
-    ctx.font = "bold 22px Consolas, monospace";
+    const isGewapend = (k.naam === "robot" && robotNu) || (k.naam === "wissen" && wissenNu);
+    const uitgeschakeld = (k.naam === "verwijder" && !heeftSelectie);
+    const isAccent = !uitgeschakeld && (aangeraakt || (k.naam === "afspelen" && afspelenActief) || (k.naam === "grijper" && grijperOpenTest) || isGewapend);
+    const accentKleur = isGewapend ? KLEUR.warn : KLEUR.accent;
+    ctx.fillStyle = isAccent ? accentKleur : KLEUR.bg;
+    tekenAfgerondRechthoek(ctx, k.x, k.y, k.w, k.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = isAccent ? accentKleur : (k.naam === "robot" ? KLEUR.ur : KLEUR.lijn); ctx.lineWidth = 2;
+    tekenAfgerondRechthoek(ctx, k.x, k.y, k.w, k.h, 10);
+    ctx.stroke();
+    ctx.fillStyle = uitgeschakeld ? KLEUR.gedempt : (isAccent ? "#fff" : (k.naam === "robot" ? KLEUR.ur : KLEUR.tekst));
+    ctx.font = "bold 15px Arial, sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(k.label, k.x + k.w/2, k.y + k.h/2);
     ctx.textAlign = "left"; ctx.textBaseline = "top";
@@ -593,31 +1055,47 @@ function tekenHudQuad(viewMatrix, projMatrix, hudModelMatrix){
 }
 
 function hudModelMatrixNu(hoofdMatrix){
-  /* 40cm voor je, iets omlaag — zelfde plek als eerder, nu met knoppen erop */
+  /* 40cm voor je, iets omlaag — begin-plek bij de allereerste keer */
   return matVermenigvuldig(hoofdMatrix, matTranslatie(0, -0.12, -0.40));
 }
+function matAlleenRotatie(m){
+  const r = new Float32Array(m);
+  r[12]=0; r[13]=0; r[14]=0;
+  return r;
+}
 
-/* Bepaalt of een wereldpunt (bijv. een knijppositie) op dit moment binnen
-   een van de knopvlakken van het paneel valt. Geeft de knopnaam terug, of
-   null. Werkt door het punt naar de LOKALE ruimte van het paneel om te
-   rekenen (inverse van de paneel-matrix) en dat tegen de canvas-vlakken
-   van tekenHudTekst te toetsen — dezelfde afmetingen, dus altijd in sync. */
+/* Bepaalt wat een wereldpunt (bijv. een knijppositie) op dit moment op het
+   paneel raakt: een knopnaam, "__paneel__" (de streepjesbalk — dit grijp
+   je vast om het paneel te verslepen), of null (nergens op, of ergens op
+   het paneel dat geen knop en geen streepjesbalk is — bewust een dode
+   zone, zodat een net-mis op een knop niet per ongeluk het paneel laat
+   verslepen). Knoppen krijgen een kleine extra marge rond hun zichtbare
+   vlak, zodat een net-mis toch nog telt als een raak schot.            */
 function hudKnopOpWereldpunt(wereldPunt, hudModelMatrix){
   const inv = matInverteerRigide(hudModelMatrix);
   const lokaal = matVecPunt(inv, wereldPunt);
-  if(Math.abs(lokaal[2]) > 0.06) return null;   // te ver vóór/achter het platte paneel
+  if(Math.abs(lokaal[2]) > 0.05) return null;   // te ver vóór/achter het platte paneel
   const hb = PANEEL_BREEDTE/2, hh = PANEEL_HOOGTE/2;
   if(lokaal[0] < -hb || lokaal[0] > hb || lokaal[1] < -hh || lokaal[1] > hh) return null;
   const cx = (lokaal[0]+hb)/PANEEL_BREEDTE * HUD_BREEDTE_PX;
   const cy = (hh-lokaal[1])/PANEEL_HOOGTE * HUD_HOOGTE_PX;
+  const marge = 14;   // extra vergevingsgezinde marge rond elke knop, alleen voor het raken — niet zichtbaar
+  const margeIoCel = 2;   // de 8 smalle I/O-cellen staan dicht op elkaar — kleinere marge voorkomt overlap met de buurcel
   for(const k of hudKnoppen){
-    if(cx >= k.x && cx <= k.x+k.w && cy >= k.y && cy <= k.y+k.h) return k.naam;
+    const m = k.__ioCel ? margeIoCel : marge;
+    if(cx >= k.x-m && cx <= k.x+k.w+m && cy >= k.y-m && cy <= k.y+k.h+m) return k.naam;
   }
-  return null;
+  if(hudSleepbalk){
+    const s = hudSleepbalk;
+    if(cx >= s.x-marge && cx <= s.x+s.w+marge && cy >= s.y-marge && cy <= s.y+s.h+marge) return "__paneel__";
+  }
+  return "__leeg__";   // wél op het paneel, maar geen knop en geen streepjesbalk — bewust een dode zone
 }
 
 
 let ankerPositie = [0, -0.3, -0.8];   // startpunt: 80cm voor je, iets omlaag
+let hudVastePositie = null;   // wereldpositie van het paneel; null = nog niet geplaatst (eerste frame)
+let hudVasteRotatie = null;   // rotatiedeel (4x4, geen verplaatsing) van het paneel
 let ankerYawGraden = 0;
 let geknepenBronnen = new Map();   // inputSource -> mode-info voor elke ACTIEVE knijp
 let grijpModus = null;             // laatst toegewezen modus, gebruikt voor de HUD-statustekst
@@ -645,17 +1123,106 @@ startBtn.addEventListener("click", async () => {
   try{
     const canvas = document.createElement("canvas");
     document.body.appendChild(canvas);
-    gl = canvas.getContext("webgl", { xrCompatible: true });
+    gl = canvas.getContext("webgl", { xrCompatible: true, antialias: true });
     if(!gl) throw new Error("Kon geen WebGL-context krijgen.");
     gl.enable(gl.DEPTH_TEST);
     bouwGeometrie();
     bouwHudQuad();
-    await session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-    try{ refSpace = await session.requestReferenceSpace("local"); }
-    catch(e1){ refSpace = await session.requestReferenceSpace("viewer"); }
+    const schaal = Math.min(1.3, XRWebGLLayer.getNativeFramebufferScaleFactor(session) || 1);
+    await session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { framebufferScaleFactor: schaal }) });
+    try{ refSpace = await session.requestReferenceSpace("local-floor"); }
+    catch(e0){
+      try{ refSpace = await session.requestReferenceSpace("local"); }
+      catch(e1){ refSpace = await session.requestReferenceSpace("viewer"); }
+    }
 
     session.addEventListener("selectstart", e => { geknepenBronnen.set(e.inputSource, {modus:null}); });
-    session.addEventListener("selectend", e => { geknepenBronnen.delete(e.inputSource); });
+    /* Vuurt de knop die tijdens het vasthouden per-frame is bijgehouden
+       (dezelfde, al bewezen werkende bijhouding als bij het slepen) — niet
+       een nieuwe, losse meting op het exacte select-moment zelf. Robuuster
+       tegen kleine handbewegingen vlak vóór het loslaten.                */
+    session.addEventListener("selectend", e => {
+      const info = geknepenBronnen.get(e.inputSource);
+      geknepenBronnen.delete(e.inputSource);
+      const knop = info && info.laatsteKnop;
+      if(!knop || knop === "__paneel__" || knop === "__leeg__") return;
+      if(knop === "vastleggen"){
+        programmaStappen.push({ q: qHuidig.slice(), open: grijperOpenTest });
+      } else if(knop === "grijper"){
+        grijperOpenTest = !grijperOpenTest;
+        if(ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type:"grijperCommando", open: grijperOpenTest }));
+      } else if(knop === "afspelen"){
+        if(afspelenActief){ afspelenActief = false; }
+        else if(programmaStappen.length >= 2){ afspelenActief = true; afspelenIndex = 0; afspelenStartTijd = performance.now(); }
+      } else if(knop === "robot"){
+        const gewapendNu = robotSturenGewapend && performance.now() < robotSturenWapendTot;
+        if(gewapendNu){
+          if(ws && ws.readyState === WebSocket.OPEN && programmaStappen.length > 0){
+            ws.send(JSON.stringify({ type:"programma", stappen: bouwBridgeStappen() }));
+          }
+          robotSturenGewapend = false;
+        } else if(programmaStappen.length > 0){
+          robotSturenGewapend = true;
+          robotSturenWapendTot = performance.now() + 4000;
+        }
+      } else if(knop === "wissen"){
+        /* net als "→ Robot": eerst wapenen, dan pas echt wissen — voorkomt
+           dat een heel programma per ongeluk in één druk verdwijnt.      */
+        const gewapendNu = wissenGewapend && performance.now() < wissenWapendTot;
+        if(gewapendNu){
+          programmaStappen = []; afspelenActief = false; waypointSelectie = null;
+          wissenGewapend = false;
+        } else if(programmaStappen.length > 0){
+          wissenGewapend = true;
+          wissenWapendTot = performance.now() + 4000;
+        }
+      } else if(knop === "tempo"){
+        afspeelTempoIdx = (afspeelTempoIdx + 1) % AFSPEEL_TEMPOS.length;
+      } else if(knop === "vorige"){
+        if(programmaStappen.length > 0){
+          waypointSelectie = waypointSelectie === null ? 0 : Math.max(0, waypointSelectie - 1);
+          qHuidig = programmaStappen[waypointSelectie].q.slice();
+          grijperOpenTest = programmaStappen[waypointSelectie].open;
+          afspelenActief = false;
+        }
+      } else if(knop === "volgende"){
+        if(programmaStappen.length > 0){
+          waypointSelectie = waypointSelectie === null ? 0 : Math.min(programmaStappen.length - 1, waypointSelectie + 1);
+          qHuidig = programmaStappen[waypointSelectie].q.slice();
+          grijperOpenTest = programmaStappen[waypointSelectie].open;
+          afspelenActief = false;
+        }
+      } else if(knop === "verwijder"){
+        if(waypointSelectie !== null && waypointSelectie < programmaStappen.length){
+          programmaStappen.splice(waypointSelectie, 1);
+          if(programmaStappen.length === 0) waypointSelectie = null;
+          else waypointSelectie = Math.min(waypointSelectie, programmaStappen.length - 1);
+          afspelenActief = false;
+        }
+      } else if(knop === "help"){
+        helpZichtbaar = !helpZichtbaar;
+      } else if(knop === "io_toggle"){
+        hudWeergave = hudWeergave === "io" ? "programma" : "io";
+      } else if(knop === "volg_toggle"){
+        volgtRobot = !volgtRobot;
+      } else if(knop === "io_terug"){
+        hudWeergave = "programma";
+      } else if(knop.startsWith("io_extensieUit_") || knop.startsWith("io_standaardUit_")){
+        const soort = knop.startsWith("io_extensieUit_") ? "extensie" : "standaard";
+        const nummer = +knop.slice(knop.lastIndexOf("_") + 1);
+        const huidigeArray = soort === "extensie" ? ioExtensieUit : ioStandaardUit;
+        const huidig = huidigeArray ? huidigeArray[nummer] : false;
+        const nieuw = !(huidig === true);
+        /* Optimistisch lokaal bijwerken — anders leest een snelle tweede
+           tik nog de oude, net iets vertraagd binnengekomen RTDE-status
+           en stuurt hij per ongeluk twee keer "aan" i.p.v. aan/uit.     */
+        const array = (soort === "extensie" ? (ioExtensieUit ||= new Array(8).fill(false)) : (ioStandaardUit ||= new Array(8).fill(false)));
+        array[nummer] = nieuw;
+        if(ws && ws.readyState === WebSocket.OPEN){
+          ws.send(JSON.stringify({ type:"ioCommando", soort, nummer, waarde:nieuw }));
+        }
+      }
+    });
 
     document.getElementById("ui").style.display = "none";
     exitBtn.style.display = "block";
@@ -666,15 +1233,38 @@ startBtn.addEventListener("click", async () => {
         const pose = frame.getViewerPose(refSpace);
         if(!pose) return;
 
+        /* Positie van een inputbron: bij voorkeur het midden tussen duim en
+           wijsvinger (nauwkeuriger, als een apparaat losse vingergewrichten
+           ondersteunt — op deze HoloLens niet, maar bijv. een nieuwere bril
+           mogelijk wel), anders de grip-/straalruimte zoals voorheen.     */
+        function bepaalInvoerPositie(bron){
+          if(bron.hand){
+            const indexJoint = bron.hand.get("index-finger-tip");
+            const duimJoint = bron.hand.get("thumb-tip");
+            if(indexJoint && duimJoint){
+              const ip = frame.getJointPose(indexJoint, refSpace);
+              const dp = frame.getJointPose(duimJoint, refSpace);
+              if(ip && dp){
+                return [(ip.transform.position.x+dp.transform.position.x)/2,
+                        (ip.transform.position.y+dp.transform.position.y)/2,
+                        (ip.transform.position.z+dp.transform.position.z)/2];
+              }
+            }
+          }
+          const ruimte = bron.gripSpace || bron.targetRaySpace;
+          if(!ruimte) return null;
+          const p = frame.getPose(ruimte, refSpace);
+          if(!p) return null;
+          return [p.transform.position.x, p.transform.position.y, p.transform.position.z];
+        }
+
         /* Elke actieve knijp (kan er 0, 1 of 2 zijn — één per hand) met zijn huidige positie. */
         const actieveKnijpen = [];
         for(const bron of session.inputSources){
           if(!geknepenBronnen.has(bron)) continue;
-          const ruimte = bron.gripSpace || bron.targetRaySpace;
-          if(!ruimte) continue;
-          const p = frame.getPose(ruimte, refSpace);
-          if(!p) continue;
-          actieveKnijpen.push({ bron, positie: [p.transform.position.x, p.transform.position.y, p.transform.position.z], info: geknepenBronnen.get(bron) });
+          const positie = bepaalInvoerPositie(bron);
+          if(!positie) continue;
+          actieveKnijpen.push({ bron, positie, info: geknepenBronnen.get(bron) });
         }
 
         /* Volgt standaard de bridge; tijdens een TCP-sleep wordt qHuidig
@@ -682,12 +1272,17 @@ startBtn.addEventListener("click", async () => {
            in de gewone twin: zelf slepen koppelt je tijdelijk los).     */
         const ankerM = ankerMatrixNu();
         const hoofdMatrix = pose.transform.matrix;
-        const hudModelMatrix = hudModelMatrixNu(hoofdMatrix);
+        if(hudVastePositie === null){
+          const beginMatrix = hudModelMatrixNu(hoofdMatrix);
+          hudVastePositie = positieVan(beginMatrix);
+          hudVasteRotatie = matAlleenRotatie(beginMatrix);
+        }
+        const hudModelMatrix = matVermenigvuldig(matTranslatie(...hudVastePositie), hudVasteRotatie);
         const bezigMetSturen = actieveKnijpen.some(k => k.info.modus === "tcp" || k.info.modus === "arm");
 
         if(afspelenActief && programmaStappen.length >= 2){
           const verstreken = t - afspelenStartTijd;
-          const fractie = Math.min(1, verstreken / AFSPEEL_DUUR_MS);
+          const fractie = Math.min(1, verstreken / afspeelDuurMs());
           const van = programmaStappen[afspelenIndex], naar = programmaStappen[afspelenIndex+1];
           qHuidig = van.q.map((v,i) => v + (naar.q[i]-v)*fractie);
           grijperOpenTest = fractie < 0.5 ? van.open : naar.open;
@@ -700,7 +1295,7 @@ startBtn.addEventListener("click", async () => {
               grijperOpenTest = programmaStappen[programmaStappen.length-1].open;
             }
           }
-        } else if(!bezigMetSturen && nieuweBridgePose){
+        } else if(!bezigMetSturen && nieuweBridgePose && volgtRobot){
           qHuidig = q.slice(); nieuweBridgePose = false;
         }
 
@@ -711,22 +1306,41 @@ startBtn.addEventListener("click", async () => {
            dat heeft al zijn eigen, directere grijplogica).                     */
         const armIndices = [1,2,3,4,5,6,7];
 
+        /* Rotatiehandvat: een "pijl" die 0,22m van de voet af op de grond
+           staat, in de richting die de huidige gierhoek (ankerYawGraden)
+           aangeeft — precies zoals een draai-gizmo in CAD. Vastpakken en
+           om de voet heen slepen wijst de robot letterlijk de kant op die
+           je hand aangeeft (rechtstreeks, geen optellen van stapjes), zodat
+           je de basis op de rotatie van de echte robot kunt richten zonder
+           te hoeven meten.                                                 */
+        const ROTATIE_HANDVAT_R = 0.22;
+        const yawRadNu = ankerYawGraden * Math.PI/180;
+        const rotatieHandvatPos = [
+          ankerPositie[0] + ROTATIE_HANDVAT_R * Math.sin(yawRadNu),
+          ankerPositie[1],
+          ankerPositie[2] + ROTATIE_HANDVAT_R * Math.cos(yawRadNu),
+        ];
+
         for(const knijp of actieveKnijpen){
           if(knijp.info.modus !== null) continue;   // deze hand was al eerder toegewezen, niet opnieuw bepalen
           const geraakt = hudKnopOpWereldpunt(knijp.positie, hudModelMatrix);
+          if(geraakt === "__paneel__"){ knijp.info.modus = "hud-verplaatsen"; continue; }
+          if(geraakt === "__leeg__") continue;   // op het paneel, maar dode zone — doet bewust niets, valt niet door naar de robot
           if(geraakt){ knijp.info.modus = "hud"; continue; }
 
           const afstandAnker = afstand(knijp.positie, ankerPositie);
           const afstandTcp = afstand(knijp.positie, tcpPositieNu);
+          const afstandRotatie = afstand(knijp.positie, rotatieHandvatPos);
           let dichtsteArmIndex = null, afstandArm = Infinity;
           for(const idx of armIndices){
             const d = afstand(knijp.positie, positieVan(matricesNu[idx]));
             if(d < afstandArm){ afstandArm = d; dichtsteArmIndex = idx; }
           }
 
-          const kleinste = Math.min(afstandAnker, afstandTcp, afstandArm);
+          const kleinste = Math.min(afstandAnker, afstandTcp, afstandArm, afstandRotatie);
           if(kleinste >= 0.20) continue;   // niets dichtbij genoeg — deze hand doet (nog) niets
           if(kleinste === afstandTcp) knijp.info.modus = "tcp";
+          else if(kleinste === afstandRotatie) knijp.info.modus = "anker-rotatie";
           else if(kleinste === afstandAnker) knijp.info.modus = "anker";
           else { knijp.info.modus = "arm"; knijp.info.armIndex = dichtsteArmIndex; }
           afspelenActief = false;   // zelf sturen onderbreekt het afspelen
@@ -735,7 +1349,9 @@ startBtn.addEventListener("click", async () => {
         const tcpGrab = actieveKnijpen.find(k => k.info.modus === "tcp");
         const armGrab = actieveKnijpen.find(k => k.info.modus === "arm");
         const ankerGrab = actieveKnijpen.find(k => k.info.modus === "anker");
+        const rotatieGrab = actieveKnijpen.find(k => k.info.modus === "anker-rotatie");
         const hudGrab = actieveKnijpen.find(k => k.info.modus === "hud");
+        const hudSleepGrab = actieveKnijpen.find(k => k.info.modus === "hud-verplaatsen");
 
         if(tcpGrab && armGrab){
           /* twee handen tegelijk: TCP bepaalt de positie, het armpunt de invalshoek. */
@@ -743,52 +1359,81 @@ startBtn.addEventListener("click", async () => {
             { index:8, positie: tcpGrab.positie },
             { index: armGrab.info.armIndex, positie: armGrab.positie },
           ], ankerM, 10);
+          ikFoutAfstand = laatsteIKRestfout;
         } else if(tcpGrab){
           qHuidig = losIKOp(qHuidig, tcpGrab.positie, ankerM, 8);
+          ikFoutAfstand = laatsteIKRestfout;
         } else if(armGrab){
           qHuidig = losIKOpMeerdere(qHuidig, [{ index: armGrab.info.armIndex, positie: armGrab.positie }], ankerM, 8);
+          ikFoutAfstand = laatsteIKRestfout;
+        } else {
+          ikFoutAfstand = 0;   // niet aan het slepen — geen onbereikbaar-signaal tonen
         }
         if(ankerGrab) ankerPositie = ankerGrab.positie;
+        if(rotatieGrab){
+          /* Rechtstreeks "aanwijzen" i.p.v. optellen: de gierhoek wordt elk
+             frame opnieuw berekend uit de richting van de voet naar je hand
+             — het handvat volgt je hand dus 1-op-1, als een kompasnaald.
+             Te dicht bij de voet zelf geeft een onbetrouwbare (bijna
+             willekeurige) hoek, dus dan even niets bijwerken.             */
+          const dx = rotatieGrab.positie[0] - ankerPositie[0];
+          const dz = rotatieGrab.positie[2] - ankerPositie[2];
+          if(Math.hypot(dx, dz) > 0.03) ankerYawGraden = Math.atan2(dx, dz) * 180/Math.PI;
+        }
+        if(hudSleepGrab){
+          /* paneel volgt de hand; blijft naar je toe gericht terwijl je het verplaatst.
+             Loslaten bevriest 'm precies daar — hij volgt je hoofd daarna niet meer.   */
+          hudVastePositie = hudSleepGrab.positie;
+          hudVasteRotatie = matAlleenRotatie(hoofdMatrix);
+        }
 
         if(hudGrab){
-          const knopNu = hudKnopOpWereldpunt(hudGrab.positie, hudModelMatrix);
-          if(knopNu && knopNu !== hudKnopVorigeStatus){
-            if(knopNu === "vastleggen"){
-              programmaStappen.push({ q: qHuidig.slice(), open: grijperOpenTest });
-            } else if(knopNu === "afspelen"){
-              if(afspelenActief){ afspelenActief = false; }
-              else if(programmaStappen.length >= 2){ afspelenActief = true; afspelenIndex = 0; afspelenStartTijd = t; }
-            } else if(knopNu === "wissen"){
-              programmaStappen = []; afspelenActief = false;
-            }
-          }
-          hudKnopVorigeStatus = knopNu;
+          /* bijhouden welke knop nu wordt aangeraakt — voor de highlight
+             ZOWEL als voor het daadwerkelijk vuren bij het loslaten.     */
+          const geraaktNu = hudKnopOpWereldpunt(hudGrab.positie, hudModelMatrix);
+          hudKnopVorigeStatus = geraaktNu;
+          if(geraaktNu && geraaktNu !== "__paneel__" && geraaktNu !== "__leeg__") hudGrab.info.laatsteKnop = geraaktNu;
         } else {
           hudKnopVorigeStatus = null;
         }
 
         /* samengevatte modus, alleen voor de statustekst/kleuren hieronder */
-        grijpModus = tcpGrab && armGrab ? "tcp+arm" : tcpGrab ? "tcp" : armGrab ? "arm" : ankerGrab ? "anker" : hudGrab ? "hud" : null;
+        grijpModus = tcpGrab && armGrab ? "tcp+arm" : tcpGrab ? "tcp" : armGrab ? "arm" : ankerGrab ? "anker" : rotatieGrab ? "anker-rotatie" : hudGrab ? "hud" : hudSleepGrab ? "paneel verslepen" : null;
+        /* niet (volledig) haalbaar: de IK kwam te ver van het gevraagde punt
+           terecht — duidelijk zichtbaar maken i.p.v. stilzwijgend "best passen". */
+        const onbereikbaar = (tcpGrab || armGrab) && ikFoutAfstand > ONBEREIKBAAR_DREMPEL;
 
         const matrices = forwardKinematica(qHuidig, ankerM);
         const gewrichten = matrices.map(positieVan);
-        /* dikte en tint lopen af van basis (dik, grijs) naar pols (dunner, lichter) */
-        const diktes  = [0.037, 0.034, 0.030, 0.024, 0.020, 0.018, 0.016];
-        const kleuren = [
-          [0.42,0.46,0.50], [0.58,0.61,0.65], [0.58,0.61,0.65], [0.52,0.55,0.59],
-          [0.47,0.50,0.54], [0.47,0.50,0.54], [0.42,0.45,0.49],
-        ];
-        const gewrichtKleur = [0.35,0.72,0.83];       // cyaan-achtig, zoals de ringen op de echte robot
-        const tcpKleur = tcpGrab ? [1,0.3,0.6] : [0.90,0.0,0.49];
+        const WAARSCHUW_KLEUR = [1, 0.35, 0.1];
+        const tcpKleur = onbereikbaar ? WAARSCHUW_KLEUR : (tcpGrab ? [1,0.3,0.6] : [0.90,0.0,0.49]);
         const ankerKleur = ankerGrab ? [1,0.3,0.6] : [0.9,0.6,0.1];
-        const gewrichtGegrepenKleur = [1,0.3,0.6];
 
-        const statusRegels = [
+        /* Zichtbaar puntje bij elke hand/controller, ook als je niet knijpt
+           — op een apparaat met fysieke controllers (i.p.v. doorzichtige
+           eigen handen) is dit de enige manier om te zien waar je mikt.  */
+        const invoerMarkers = [];
+        for(const bron of session.inputSources){
+          const positie = bepaalInvoerPositie(bron);
+          if(positie) invoerMarkers.push({ positie, actief: geknepenBronnen.has(bron) });
+        }
+
+        const statusRegels = helpZichtbaar ? [
+          "🟡 Voet knijpen = robot verplaatsen",
+          "🧭 Pijl bij de voet knijpen = draaien (richt 'm op je hand)",
+          "🩷 TCP knijpen = positioneren",
+          "🤏 + arm erbij = invalshoek",
+          "📋 Paneel: streepjesbalk = verslepen",
+          "◀ ▶ blader door waypoints, ✕ verwijdert er één",
+          "VOLGT/LOS-knop: zet uit om los te programmeren zonder dat de robot je werk overschrijft",
+        ] : [
           "Bridge: " + bridgeStatusTekst,
           "Modus: " + (grijpModus || "vrij") + (grijpModus === "hud" ? " (" + (hudKnopVorigeStatus||"") + ")" : ""),
-          "Waypoints: " + programmaStappen.length,
-          afspelenActief ? "Afspelen: stap " + (afspelenIndex+1) + "/" + programmaStappen.length : "Afspelen: gestopt",
-        ];
+          volgtRobot ? null : "🟠 Losgekoppeld — volgt de robot niet (VOLGT-knop om weer te syncen)",
+          onbereikbaar ? "⚠ buiten bereik — punt niet volledig haalbaar" : null,
+          "Waypoints: " + programmaStappen.length + (waypointSelectie !== null && waypointSelectie < programmaStappen.length ? "  (bekijkt " + (waypointSelectie+1) + ")" : ""),
+          afspelenActief ? "Afspelen: stap " + (afspelenIndex+1) + "/" + programmaStappen.length + " · " + AFSPEEL_TEMPO_LABELS[afspeelTempoIdx].toLowerCase() : "Afspelen: gestopt",
+        ].filter(r => r !== null);
         tekenHudTekst(statusRegels, grijpModus === "hud" ? hudKnopVorigeStatus : null);
 
         const layer = session.renderState.baseLayer;
@@ -798,17 +1443,27 @@ startBtn.addEventListener("click", async () => {
           const vp = layer.getViewport(view);
           gl.viewport(vp.x, vp.y, vp.width, vp.height);
           const viewMatrix = matInverteer(view.transform.matrix);
+          huidigeCameraPos = positieVan(view.transform.matrix);
           const projMatrix = view.projectionMatrix;
 
+          tekenSchaduw(viewMatrix, projMatrix, gewrichten[0]);
           tekenVoet(viewMatrix, projMatrix, gewrichten[0], ankerKleur);
-          /* basis t/m flens (index 0..7): armsegmenten. het laatste stuk (flens->tcp) is de grijper zelf. */
-          for(let i=0;i<7;i++){
-            tekenSegment(viewMatrix, projMatrix, gewrichten[i], gewrichten[i+1], diktes[i], kleuren[i]);
-            tekenGewricht(viewMatrix, projMatrix, gewrichten[i+1], (armGrab && armGrab.info.armIndex===i+1) ? gewrichtGegrepenKleur : gewrichtKleur, i===6 ? 0.030 : 0.036);
+          /* Rotatiehandvat: altijd zichtbaar (niet pas tijdens het slepen),
+             zodat 'm te vínden is — een dunne "pijl" naar buiten vanaf de
+             voet, met een bolletje als handvat op het uiteinde.           */
+          const rotatieKleur = rotatieGrab ? [1,0.3,0.6] : [0.9,0.6,0.1];
+          tekenSegment(viewMatrix, projMatrix, gewrichten[0], rotatieHandvatPos, 0.006, rotatieKleur);
+          tekenGewricht(viewMatrix, projMatrix, rotatieHandvatPos, rotatieKleur, 0.018, 12);
+          tekenRobotArm(viewMatrix, projMatrix, matrices);
+          if(armGrab){
+            tekenGewricht(viewMatrix, projMatrix, gewrichten[armGrab.info.armIndex], onbereikbaar ? WAARSCHUW_KLEUR : [1,0.3,0.6], 0.014);
           }
-          tekenGrijper(viewMatrix, projMatrix, matrices[7]);
+          tekenGrijper(viewMatrix, projMatrix, matrices[7], grijperOpenTest);
           tekenGewricht(viewMatrix, projMatrix, gewrichten[8], tcpKleur, 0.012);
           tekenHudQuad(viewMatrix, projMatrix, hudModelMatrix);
+          for(const marker of invoerMarkers){
+            tekenGewricht(viewMatrix, projMatrix, marker.positie, marker.actief ? [1,0.85,0.2] : [0.8,0.85,0.9], marker.actief ? 0.010 : 0.007, 30);
+          }
         }
       } catch(renderErr){
         console.error("Fout tijdens renderen:", renderErr);

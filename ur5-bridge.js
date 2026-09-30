@@ -5,7 +5,9 @@
    Het leest de realtime-interface van de robot (poort 30003) en
    geeft de gewrichtshoeken via WebSocket door aan de twin.
    URScript-commando's uit de twin worden doorgestuurd naar
-   poort 30002 (secondary interface).
+   poort 30002 (secondary interface). De digitale I/O (standaard én
+   de configureerbare "extension"-aansluiting) wordt via RTDE
+   (poort 30004) uitgelezen en via dezelfde URScript-weg beschreven.
 
    INSTALLATIE (eenmalig, op de pc die aan de robot hangt):
      1. Installeer Node.js (nodejs.org, LTS-versie).
@@ -38,11 +40,13 @@ const https = require("https");
 const WebSocket = require("ws");
 
 /* ------------------ INSTELLINGEN ------------------ */
-let ROBOT_IP = process.argv[2] || "192.168.1.100";   // IP van de robot
+let ROBOT_IP = process.argv[2] || "bobba.local";   // IP van de robot
+//let ROBOT_IP = process.argv[2] || "ursula.local";
 /* Ander IP? Start met:  node ur5-bridge.js 192.168.192.4
    of wissel tijdens gebruik via de twin (knop "Wissel robot"). */
 const RT_POORT   = 30003;            // realtime interface (uitlezen, 125 Hz)
 const CMD_POORT  = 30002;            // secondary interface (URScript sturen)
+const RTDE_POORT = 30004;            // RTDE interface (digitale I/O uitlezen)
 const WS_POORT   = 9090;             // poort waarop de twin verbindt
 const ZEND_HZ    = 15;               // hoe vaak joints naar de twin gaan
 const TLS_CERT   = process.env.TLS_CERT || "cert.pem";
@@ -284,6 +288,172 @@ const DASH_TOEGESTAAN = new Set([
   "unlock protective stop", "safetystatus", "stop", "close popup"
 ]);
 
+/* ------------------ Digitale I/O: RTDE (poort 30004) lezen ------------------
+   De echte "extension bus" van de UR-controller (de configureerbare I/O,
+   los van de 2 vaste standaard-in/uitgangen) is via geen van de andere
+   drie poorten rechtstreeks en betrouwbaar uit te lezen: de vaste byte-
+   offsets van poort 30003 verschillen per firmwareversie. RTDE (30004) is
+   de door UR zelf bedoelde weg hiervoor: je vraagt met NAMEN de velden op
+   die je wilt (hier "actual_digital_input_bits" en "..._output_bits"),
+   in plaats van te gokken op een byte-positie.
+
+   Protocol (binair, protocolversie 1 — de eenvoudigste variant, zonder
+   apart frequentieveld):
+     header = 2 bytes grootte (big-endian) + 1 byte berichttype
+     'V' (86) = protocolversie aanvragen/bevestigen
+     'O' (79) = output-recept opzetten (welke velden willen we?)
+     'S' (83) = datastroom starten
+     'U' (85) = databericht: 1 byte recept-id + de velden, in de
+                aangevraagde volgorde, elk als UINT64 (8 bytes)
+     'M' (77) = tekstmelding van de controller (fout/waarschuwing)
+
+   Bitindeling van beide UINT64-velden (vaste UR-indeling):
+     bit 0-7   = standaard digitale I/O   (DI0-7 / DO0-7)
+     bit 8-15  = configureerbare I/O, ofwel de "extension"-aansluiting
+                 op de controllerkast (CI0-7 / CO0-7) — dit is waar Ken
+                 zijn eigen in/output op heeft zitten
+     bit 16-17 = tool-I/O (niet gebruikt in deze bridge)             */
+let rtdeSocket = null;
+let rtdeBuffer = Buffer.alloc(0);
+let laatsteIO = null;   // { standaardIn/Uit, extensieIn/Uit: elk een array van 8 booleans }
+const RTDE_HZ = 10;     // update-frequentie die we bij protocolversie 2 opgeven (ruim binnen het toegestane bereik van elke controller)
+
+/* Protocolversie-onderhandeling: nieuwere controllers (e-Series/PolyScope 5.x)
+   verwachten protocolversie 2 — het opzetbericht ('O') krijgt dan een extra
+   8-byte frequentieveld VOOR de veldnamen, en het antwoord daarop begint met
+   een extra recept-id-byte. Oudere controllers (CB3/PolyScope 3.x) kennen
+   alleen versie 1, zonder dat frequentieveld. Vraag je de verkeerde versie
+   aan (of stuur je na een weigering toch het bericht van de andere versie),
+   dan leest de controller het opzetbericht verkeerd en komt er nooit een
+   bruikbare datastroom op gang — outputs (via URScript op poort 30002)
+   blijven dan gewoon werken, maar er wordt niets ingelezen. Vandaar: eerst
+   versie 2 proberen, bij weigering terugvallen op versie 1.             */
+let rtdeVersie = null;          // onderhandelde versie zodra de robot 'm heeft geaccepteerd
+let rtdeGevraagdeVersie = 2;    // welke versie we nu net hebben aangevraagd
+
+function rtdeBericht(type, payload = Buffer.alloc(0)) {
+  const buf = Buffer.alloc(3 + payload.length);
+  buf.writeUInt16BE(3 + payload.length, 0);
+  buf.writeUInt8(type, 2);
+  payload.copy(buf, 3);
+  return buf;
+}
+
+function bitsNaarArray(bigintWaarde, startBit, aantal) {
+  const r = [];
+  for (let i = 0; i < aantal; i++) r.push(!!((bigintWaarde >> BigInt(startBit + i)) & 1n));
+  return r;
+}
+
+function vraagRTDEVersieAan(versie) {
+  rtdeGevraagdeVersie = versie;
+  const payload = Buffer.alloc(2);
+  payload.writeUInt16BE(versie, 0);
+  rtdeSocket.write(rtdeBericht(86, payload));
+}
+
+function stuurRTDEOutputSetup() {
+  const namen = "actual_digital_input_bits,actual_digital_output_bits";
+  if (rtdeVersie === 2) {
+    const freq = Buffer.alloc(8);
+    freq.writeDoubleBE(RTDE_HZ, 0);
+    rtdeSocket.write(rtdeBericht(79, Buffer.concat([freq, Buffer.from(namen, "ascii")])));
+  } else {
+    rtdeSocket.write(rtdeBericht(79, Buffer.from(namen, "ascii")));   // versie 1: geen frequentieveld
+  }
+}
+
+function verwerkRTDEBericht(type, payload) {
+  if (type === 86) {                                    // antwoord op protocolversie-verzoek: 1 byte, 1 = geaccepteerd
+    const geaccepteerd = payload.length >= 1 && payload.readUInt8(0) === 1;
+    if (geaccepteerd) {
+      rtdeVersie = rtdeGevraagdeVersie;
+      console.log(`[io] RTDE-protocolversie ${rtdeVersie} geaccepteerd door de robot`);
+      stuurRTDEOutputSetup();
+    } else if (rtdeGevraagdeVersie === 2) {
+      console.log("[io] RTDE-protocolversie 2 geweigerd — dit is waarschijnlijk een oudere controller (CB3), probeer versie 1");
+      vraagRTDEVersieAan(1);
+    } else {
+      console.log("[io] RTDE-protocolversie 1 óók geweigerd — digitale I/O uitlezen lukt niet op deze robot/firmware");
+    }
+  } else if (type === 79) {                               // antwoord op recept-opzet: teruggegeven types
+    /* Bij protocolversie 2 begint het antwoord met een extra recept-id-byte
+       vóór de (ASCII) typenamen; bij versie 1 is het antwoord alleen de
+       typenamen. Sla de verkeerde bytes over en je leest "UINT64,UINT64"
+       als iets anders (of denkt ten onrechte dat het veld niet bestaat).   */
+    const types = rtdeVersie === 2
+      ? (payload.length > 1 ? payload.slice(1).toString("ascii") : "")
+      : payload.toString("ascii");
+    if (!types || /NOT_FOUND/i.test(types)) {
+      console.log(`[io] RTDE meldt een onbekend veld (${types || "leeg antwoord"}) — digitale I/O uitlezen lukt niet op deze robot/firmware`);
+    }
+    rtdeSocket.write(rtdeBericht(83));                    // 'S' datastroom starten
+  } else if (type === 83) {
+    console.log("[io] RTDE-datastroom voor digitale I/O gestart");
+  } else if (type === 85) {                               // databericht
+    if (payload.length < 1 + 8 + 8) return;               // 1 byte recept-id + 2×8 bytes velden
+    const inBits = payload.readBigUInt64BE(1);
+    const uitBits = payload.readBigUInt64BE(9);
+    laatsteIO = {
+      standaardIn:  bitsNaarArray(inBits, 0, 8),
+      extensieIn:   bitsNaarArray(inBits, 8, 8),
+      standaardUit: bitsNaarArray(uitBits, 0, 8),
+      extensieUit:  bitsNaarArray(uitBits, 8, 8),
+    };
+  } else if (type === 77) {
+    console.log(`[io] RTDE-melding: ${payload.toString("ascii")}`);
+  }
+}
+
+function verbindRTDE() {
+  rtdeSocket = net.createConnection(RTDE_POORT, ROBOT_IP, () => {
+    console.log(`[io] RTDE verbonden met ${ROBOT_IP}:${RTDE_POORT}`);
+    rtdeVersie = null;
+    vraagRTDEVersieAan(2);                                // eerst de moderne versie proberen, met terugval op 1
+  });
+
+  rtdeBuffer = Buffer.alloc(0);
+  rtdeSocket.on("data", chunk => {
+    rtdeBuffer = Buffer.concat([rtdeBuffer, chunk]);
+    while (rtdeBuffer.length >= 3) {
+      const size = rtdeBuffer.readUInt16BE(0);
+      if (size < 3 || size > 4096) { rtdeBuffer = Buffer.alloc(0); break; }   // uit sync
+      if (rtdeBuffer.length < size) break;                                    // bericht nog niet compleet
+      const type = rtdeBuffer.readUInt8(2);
+      const payload = rtdeBuffer.slice(3, size);
+      rtdeBuffer = rtdeBuffer.slice(size);
+      verwerkRTDEBericht(type, payload);
+    }
+  });
+
+  rtdeSocket.on("error", err => console.log(`[io] RTDE-fout: ${err.message}`));
+  rtdeSocket.on("close", () => {
+    console.log("[io] RTDE-verbinding verbroken — opnieuw proberen over 3 s");
+    laatsteIO = null;
+    rtdeVersie = null;
+    setTimeout(verbindRTDE, 3000);
+  });
+}
+verbindRTDE();
+
+/* Digitale I/O met vaste frequentie naar de twin(s) sturen, net als de joints.
+   Altijd sturen (niet alleen als laatsteIO gevuld is) met een expliciete
+   rtdeVerbonden-vlag: zo ziet de twin zelf het verschil tussen "bridge
+   online maar RTDE geeft nog geen data" en een echte livestand, in plaats
+   van gewoon stil te blijven zonder enige melding in de interface.        */
+setInterval(() => {
+  broadcast({ type: "io", rtdeVerbonden: !!laatsteIO, ...(laatsteIO || {}) });
+}, 1000 / ZEND_HZ);
+
+/* Schrijven gebeurt gewoon via URScript op de secondary interface (poort
+   30002) — dezelfde weg als bewegingen en freedrive, geen aparte
+   verbinding nodig. "extensie" = de configureerbare I/O (de extension-
+   aansluiting); "standaard" = de vaste standaard digitale I/O.         */
+function stuurIOCommando(soort, nummer, waarde) {
+  const functie = soort === "extensie" ? "set_configurable_digital_out" : "set_standard_digital_out";
+  stuurURScript(`${functie}(${nummer}, ${waarde ? "True" : "False"})`);
+}
+
 /* ------------------ Freedrive via URScript ------------------
    Start: programma dat freedrive aanzet en blijft draaien.
    Stop:  leeg programma versturen — dat vervangt het draaiende
@@ -437,6 +607,7 @@ async function netwerkCheck() {
   r.push(await testPoort(RT_POORT,  `Poort ${RT_POORT} (uitlezen)`));
   r.push(await testPoort(CMD_POORT, `Poort ${CMD_POORT} (URScript)`));
   r.push(await testPoort(DASH_POORT,`Poort ${DASH_POORT} (dashboard)`));
+  r.push(await testPoort(RTDE_POORT,`Poort ${RTDE_POORT} (digitale I/O)`));
 
   return r;
 }
@@ -450,8 +621,10 @@ function wisselRobot(ip) {
   console.log(`[bridge] wissel naar robot ${ip}`);
   ROBOT_IP = ip;
   laatsteQ = null;
-  if (rtSocket)  rtSocket.destroy();    // close-handlers verbinden opnieuw,
-  if (dashSocket) dashSocket.destroy(); // nu met het nieuwe ROBOT_IP
+  laatsteIO = null;
+  if (rtSocket)   rtSocket.destroy();    // close-handlers verbinden opnieuw,
+  if (dashSocket) dashSocket.destroy();  // nu met het nieuwe ROBOT_IP
+  if (rtdeSocket) rtdeSocket.destroy();
   broadcast({ type: "status", robot: "wisselen naar " + ip });
 }
 
@@ -503,6 +676,12 @@ wss.on("connection", ws => {
       leesGrijperStatus()
         .then(status => ws.send(JSON.stringify({ type: "grijperstatus", ...status })))
         .catch(err => ws.send(JSON.stringify({ type: "error", message: "Grijperstatus lezen mislukt: " + err.message })));
+    }
+    if (msg.type === "ioCommando"
+        && (msg.soort === "standaard" || msg.soort === "extensie")
+        && Number.isInteger(msg.nummer) && msg.nummer >= 0 && msg.nummer <= 7
+        && typeof msg.waarde === "boolean") {
+      stuurIOCommando(msg.soort, msg.nummer, msg.waarde);
     }
   });
   ws.on("close", () => console.log("[twin] verbinding gesloten"));

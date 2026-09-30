@@ -200,6 +200,42 @@
   }
   .grip-state b{color:var(--ur); font-weight:500;}
 
+  /* Digitale I/O — verticale lijst met bewerkbare namen per signaal, zelfde
+     rij-opbouw als #wplist hieronder (achtergrondvakje, rand, afgeronde hoeken). */
+  .io-groep{margin-bottom:10px;}
+  .io-groep:last-of-type{margin-bottom:0;}
+  .io-label{font-size:11px; color:var(--muted); margin-bottom:5px;}
+  .io-lijst{list-style:none; display:flex; flex-direction:column; gap:4px;}
+  .io-lijst li{
+    display:flex; align-items:center; gap:7px; background:var(--bg);
+    border:1px solid var(--line); border-radius:8px; padding:5px 7px;
+  }
+  .io-led{
+    width:16px; height:16px; border-radius:5px; border:1px solid var(--line);
+    flex:0 0 auto; transition:background .12s, border-color .12s, box-shadow .12s;
+  }
+  .io-led.klikbaar{cursor:pointer;}
+  .io-led.klikbaar:hover{border-color:var(--ur);}
+  .io-led.aan{
+    background:var(--ok); border-color:var(--ok); box-shadow:0 0 7px rgba(62,207,142,.5);
+  }
+  /* Alleen UIT-staande alleen-lezen leds dimmen (dat is de "niet klikbaar"-
+     hint) — een AAN-staande ingang moet net zo fel oplichten als een uitgang,
+     anders is een actieve ingang bijna onzichtbaar naast de volle uitgangen. */
+  .io-led.alleenlezen:not(.aan){opacity:.55;}
+  .io-id{
+    font-family:var(--font-data); font-size:10.5px; color:var(--muted);
+    flex:0 0 28px; user-select:none;
+  }
+  .io-naam{
+    flex:1; min-width:0; background:transparent; border:1px solid transparent;
+    color:var(--text); font-family:var(--font-ui); font-size:12px;
+    padding:3px 5px; border-radius:5px;
+  }
+  .io-naam::placeholder{color:var(--muted); opacity:.7;}
+  .io-naam:hover{border-color:var(--line);}
+  .io-naam:focus{background:var(--panel-2); border-color:var(--ur); outline:none;}
+
   /* Programma */
   .prog-controls{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px;}
   .prog-controls label{font-size:12px; color:var(--muted); display:flex; gap:5px; align-items:center; cursor:pointer;}
@@ -296,7 +332,7 @@
 
 <header>
   <div class="logo">UR</div>
-  <h1>UR5e Digital Twin <span>— <a href="/ur5-ar-viewer.html">RoboLab</a></span></h1>
+  <h1>UR5e Digital Twin <span>— RoboLab</span></h1>
   <div style="margin-left:auto; display:flex; align-items:center; gap:14px;">
     <a href="ur5-handleiding.html" target="_blank" style="color:var(--muted); font-size:12.5px; text-decoration:none; border:1px solid var(--line); border-radius:999px; padding:5px 14px;">Handleiding ↗</a>
     <div class="badge" id="statusBadge" style="margin-left:0"><span class="dot"></span><span id="statusText">SIMULATIE</span></div>
@@ -417,6 +453,29 @@
         <button class="btn" id="boxDeselect" style="display:none">Deselecteren</button>
       </div>
       <div class="grip-state" id="gripState">Grijper: <b>open</b> · Doos: <b>vrij</b></div>
+    </section>
+
+    <!-- Digitale I/O -->
+    <section class="panel">
+      <h2>Digitale I/O</h2>
+      <div class="io-groep">
+        <div class="io-label">Ingangen — standaard (DI0–DI7)</div>
+        <ul class="io-lijst" id="ioStdInRij"></ul>
+      </div>
+      <div class="io-groep">
+        <div class="io-label">Uitgangen — standaard (DO0–DO7)</div>
+        <ul class="io-lijst" id="ioStdUitRij"></ul>
+      </div>
+      <div class="io-groep">
+        <div class="io-label">Ingangen — extension bus (CI0–CI7)</div>
+        <ul class="io-lijst" id="ioExtInRij"></ul>
+      </div>
+      <div class="io-groep">
+        <div class="io-label">Uitgangen — extension bus (CO0–CO7)</div>
+        <ul class="io-lijst" id="ioExtUitRij"></ul>
+      </div>
+      <div class="conn-note" style="margin-top:8px">Klik op het vierkantje om te schakelen; klik op de naam om een eigen label te geven (bijv. "Sensor 1 cilinder") — dit onthoudt de pagina.</div>
+      <div class="conn-note" id="ioStatus" style="margin-top:4px">Gesimuleerd — klik op een vakje om te testen (geen robotverbinding).</div>
     </section>
 
     <!-- Programma -->
@@ -1669,6 +1728,157 @@ document.getElementById("boxReset").addEventListener("click", () => {
 });
 
 /* ============================================================
+   6b. Digitale I/O — standaard + de configureerbare "extension bus"
+   ============================================================
+   Twee standen, zoals de rest van de twin:
+   • Niet verbonden: volledig GESIMULEERD — elk vakje (in én uit) is
+     vrij aan/uit te klikken, net zo losstaand als de grijper/dozen.
+     Handig voor studenten om ermee te oefenen zonder de echte UR5e.
+   • Verbonden met de bridge: een live spiegel van de ECHTE robot-I/O.
+     Uitgangen blijven klikbaar (schakelt de echte extension bus/DO's);
+     ingangen worden alleen-lezen, want die komen van echte sensoren.
+   Elk signaal staat als een rij in een lijst (led + technische naam
+   DI0/CO3/… + een los bewerkbaar naamveld), zodat een specifiek
+   signaal een eigen label kan krijgen (bijv. "Sensor 1 cilinder") in
+   plaats van dat je op DI0..DI7 moet onthouden wat waarvoor is. De
+   namen staan los van de live/gesimuleerde waarden en blijven ook na
+   herladen van de pagina staan (localStorage).                       */
+const IO_GROEPEN = [
+  { naam:"standaardIn",  containerId:"ioStdInRij", uit:false, soort:"standaard", prefix:"DI" },
+  { naam:"standaardUit", containerId:"ioStdUitRij", uit:true,  soort:"standaard", prefix:"DO" },
+  { naam:"extensieIn",   containerId:"ioExtInRij",  uit:false, soort:"extensie",  prefix:"CI" },
+  { naam:"extensieUit",  containerId:"ioExtUitRij", uit:true,  soort:"extensie",  prefix:"CO" },
+];
+const ioStatusEl = document.getElementById("ioStatus");
+const ioWaarden = {};          // groepnaam -> array van 8 booleans (gesimuleerd óf live, naar gelang verbonden)
+const ioElementen = {};        // groepnaam -> array van 8 led-divs
+let ioOntvangen = false;       // is er ooit al een "io"-bericht binnengekomen?
+
+const IO_NAMEN_KEY = "ur5twin_io_namen";
+let ioNamen = {};               // groepnaam -> { "0": "Sensor 1 cilinder", ... }
+try { ioNamen = JSON.parse(localStorage.getItem(IO_NAMEN_KEY)) || {}; }
+catch(e){ ioNamen = {}; }
+
+function opgeslagenIoNaam(groepNaam, i){
+  return (ioNamen[groepNaam] && ioNamen[groepNaam][i]) || "";
+}
+function bewaarIoNaam(groepNaam, i, naam){
+  const schoon = naam.trim();
+  if(!ioNamen[groepNaam]) ioNamen[groepNaam] = {};
+  if(schoon) ioNamen[groepNaam][i] = schoon;
+  else delete ioNamen[groepNaam][i];
+  try { localStorage.setItem(IO_NAMEN_KEY, JSON.stringify(ioNamen)); } catch(e){ /* geen opslag beschikbaar, negeren */ }
+}
+
+function ioIsVerbonden(){ return !!(ws && ws.readyState === WebSocket.OPEN); }
+
+function setIoBit(groepNaam, i, aan){
+  ioWaarden[groepNaam][i] = !!aan;
+  ioElementen[groepNaam][i].classList.toggle("aan", !!aan);
+}
+
+function updateIoWeergave(groepNaam, bits){
+  bits.forEach((aan, i) => setIoBit(groepNaam, i, aan === true));
+}
+
+/* Cursor, kleur en tooltip volgen de verbindingsstatus: alles gesimuleerd
+   en klikbaar zonder bridge; met bridge zijn alleen de uitgangen dat nog. */
+function ververIoInteractie(){
+  const verbonden = ioIsVerbonden();
+  IO_GROEPEN.forEach(groep => {
+    const soortLabel = groep.soort === "extensie" ? "Extension bus" : "Standaard";
+    ioElementen[groep.naam].forEach((el, i) => {
+      const klikbaar = groep.uit || !verbonden;
+      el.classList.toggle("klikbaar", klikbaar);
+      el.classList.toggle("alleenlezen", !klikbaar);
+      el.title = !klikbaar
+        ? soortLabel + " ingang " + i + " — alleen-lezen (komt van de robot)"
+        : verbonden
+          ? soortLabel + " uitgang " + i + " — klik om te schakelen"
+          : soortLabel + " " + (groep.uit ? "uitgang" : "ingang") + " " + i + " — gesimuleerd, klik om te testen";
+    });
+  });
+}
+
+IO_GROEPEN.forEach(groep => {
+  ioWaarden[groep.naam] = new Array(8).fill(false);   // gesimuleerde beginstand: alles uit
+  ioElementen[groep.naam] = [];
+  const lijst = document.getElementById(groep.containerId);
+  for(let i = 0; i < 8; i++){
+    const li = document.createElement("li");
+
+    const led = document.createElement("div");
+    led.className = "io-led";
+    led.addEventListener("click", () => {
+      if(ioIsVerbonden()){
+        if(!groep.uit) return;   // echte ingangen zijn alleen-lezen — komen van de robot
+        const nieuw = !(ioWaarden[groep.naam][i] === true);
+        /* Optimistisch: direct lokaal omzetten, niet wachten op de eerst-
+           volgende RTDE-update van de bridge. Anders leest een snelle
+           tweede klik nog de oude status (die live-update komt met een
+           kleine vertraging binnen) en stuurt hij per ongeluk twee keer
+           "aan" in plaats van "aan" en dan "uit". De eerstvolgende echte
+           io-update bevestigt dit gewoon (of corrigeert het, als het
+           commando om wat voor reden dan ook niet aankwam).            */
+        setIoBit(groep.naam, i, nieuw);
+        sendToBridge({ type:"ioCommando", soort:groep.soort, nummer:i, waarde:nieuw });
+      } else {
+        setIoBit(groep.naam, i, !(ioWaarden[groep.naam][i] === true));   // gesimuleerd: gewoon lokaal wisselen
+      }
+    });
+
+    const idLabel = document.createElement("span");
+    idLabel.className = "io-id";
+    idLabel.textContent = groep.prefix + i;
+
+    const naamVeld = document.createElement("input");
+    naamVeld.type = "text";
+    naamVeld.className = "io-naam";
+    naamVeld.placeholder = groep.prefix + i;
+    naamVeld.spellcheck = false;
+    naamVeld.value = opgeslagenIoNaam(groep.naam, i);
+    naamVeld.title = "Eigen naam voor dit signaal, bijv. “Sensor 1 cilinder”";
+    naamVeld.addEventListener("change", () => bewaarIoNaam(groep.naam, i, naamVeld.value));
+
+    li.appendChild(led);
+    li.appendChild(idLabel);
+    li.appendChild(naamVeld);
+    lijst.appendChild(li);
+    ioElementen[groep.naam].push(led);
+  }
+});
+/* Uitgesteld tot na de volledige scriptuitvoering: ioIsVerbonden() leest de
+   variabele "ws", die pas verderop in dit bestand met "let" wordt
+   gedeclareerd — vóór dat punt aanroepen geeft een TDZ-fout.            */
+setTimeout(ververIoInteractie, 0);
+
+function verwerkIoBericht(msg){
+  /* De bridge stuurt dit bericht nu altijd (ook zonder robot-data), met een
+     expliciete rtdeVerbonden-vlag. Zo is meteen zichtbaar of de bridge wel
+     draait maar de robot geen RTDE-data levert — in plaats van dat de
+     ingangen stil op "alleen-lezen, altijd uit" blijven staan zonder dat
+     ergens duidelijk wordt dát en waarom er niets binnenkomt.            */
+  if(msg.rtdeVerbonden){
+    ioOntvangen = true;
+    ioStatusEl.textContent = "Live — bijgewerkt via de bridge (ingangen alleen-lezen).";
+    IO_GROEPEN.forEach(groep => {
+      if(Array.isArray(msg[groep.naam])) updateIoWeergave(groep.naam, msg[groep.naam]);
+    });
+  } else if(!ioOntvangen){
+    ioStatusEl.textContent = "Bridge verbonden, maar nog geen I/O-data van de robot ontvangen — controleer de [io]-regels in de bridge-terminal.";
+  }
+}
+
+function resetIoWeergave(){
+  /* Terug naar gesimuleerd bij het verbreken van de verbinding — de laatst
+     bekende stand blijft staan (niets wordt teruggezet naar uit), maar is
+     vanaf nu weer gewoon lokaal te bewerken, ook op de ingangen.        */
+  ioOntvangen = false;
+  ioStatusEl.textContent = "Gesimuleerd — klik op een vakje om te testen (geen robotverbinding).";
+  ververIoInteractie();
+}
+
+/* ============================================================
    7. Beweging: MoveJ (gewrichten) en MoveP (rechte TCP-baan)
    ============================================================ */
 let moveToken = 0;
@@ -2070,8 +2280,11 @@ connectBtn.addEventListener("click", () => {
   try{ ws = new WebSocket(url); }
   catch(err){ log("Ongeldig adres: " + err.message, "err"); setStatus(""); ws = null; return; }
 
-  ws.onopen = () => { setStatus("connected"); log("Bridge verbonden.", "ok"); };
-  ws.onclose = () => { setStatus(""); ws = null; log("Verbinding verbroken — terug naar simulatie.", "warn"); };
+  ws.onopen = () => { setStatus("connected"); log("Bridge verbonden.", "ok"); ververIoInteractie(); };
+  ws.onclose = () => {
+    setStatus(""); ws = null; log("Verbinding verbroken — terug naar simulatie.", "warn");
+    resetIoWeergave();
+  };
   ws.onerror = () => { log("Bridge niet bereikbaar. Draait <b>node ur5-bridge.js</b>?", "err"); };
   ws.onmessage = ev => {
     let msg; try{ msg = JSON.parse(ev.data); } catch{ return; }
@@ -2086,6 +2299,7 @@ connectBtn.addEventListener("click", () => {
       const extra = msg.gripGedetecteerd ? " · vastgepakt" : "";
       log("Echte grijper: <b>" + msg.breedteMM.toFixed(0) + " mm</b>" + extra, msg.veiligheidsfout ? "err" : "ok");
     }
+    if(msg.type === "io") verwerkIoBericht(msg);
     if(msg.type === "error") log("Bridge: " + msg.message, "err");
     if(msg.type === "dashboard") log("Robot: <b>" + msg.antwoord + "</b>",
       /fout|fail|not|cannot/i.test(msg.antwoord) ? "warn" : "ok");
