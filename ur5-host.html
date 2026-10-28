@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>UR5e AR-server — RoboLab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#12161D; --paneel:#1A2028; --lijn:#2A3340; --tekst:#E8ECF2; --gedempt:#8B95A5;
+    --accent:#E6007E; --ur:#5AB8D4; --ok:#3ECF8E; --err:#FF5C5C; --warn:#F5A623; --geel:#E6A117;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0; background:var(--bg); color:var(--tekst); font-family:system-ui,Segoe UI,Arial,sans-serif;}
+  header{ display:flex; align-items:center; gap:14px; padding:14px 22px; border-bottom:1px solid var(--lijn); background:var(--paneel); position:sticky; top:0; z-index:5; flex-wrap:wrap; }
+  .badge{ background:var(--accent); color:#fff; font-weight:800; font-size:15px; border-radius:8px; padding:8px 13px; letter-spacing:.5px; }
+  h1{ font-size:19px; margin:0; font-weight:700; }
+  .sub{ color:var(--gedempt); font-size:13px; }
+  header a{ margin-left:auto; color:var(--gedempt); font-size:13px; text-decoration:none; border:1px solid var(--lijn); border-radius:8px; padding:8px 14px; }
+  main{ display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:16px; padding:18px 22px 60px; max-width:1500px; margin:0 auto; }
+  section{ background:var(--paneel); border:1px solid var(--lijn); border-radius:10px; padding:16px 18px; }
+  section.breed{ grid-column:1 / -1; }
+  h2{ font-size:12px; color:var(--gedempt); text-transform:uppercase; letter-spacing:.6px; margin:0 0 12px; font-weight:700; }
+  label{ font-size:13px; color:var(--gedempt); display:block; margin:8px 0 4px; }
+  input,select{ background:var(--bg); border:1px solid var(--lijn); color:var(--tekst); border-radius:6px; padding:8px 10px; font-size:13px; font-family:Consolas,monospace; }
+  input[type=text],input:not([type]){ width:100%; }
+  button{ background:var(--accent); color:#fff; border:none; border-radius:8px; padding:9px 16px; font-size:13px; font-weight:700; cursor:pointer; }
+  button.rand{ background:transparent; border:1.5px solid var(--lijn); color:var(--tekst); }
+  button.gevaar{ background:transparent; border:1.5px solid var(--warn); color:var(--warn); }
+  button:disabled{ opacity:.4; cursor:default; }
+  .rij{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .status{ font-family:Consolas,monospace; font-size:13px; padding:10px 12px; background:var(--bg); border:1px solid var(--lijn); border-radius:8px; margin-top:10px; }
+  .ok{ color:var(--ok); } .warn{ color:var(--warn); } .err{ color:var(--err); }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  th{ text-align:left; color:var(--gedempt); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--lijn); }
+  td{ padding:7px 8px; border-bottom:1px solid var(--lijn); vertical-align:middle; }
+  tr.gekozen td{ background:rgba(230,0,126,.10); }
+  .punt{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; background:var(--gedempt); }
+  .punt.aan{ background:var(--ok); }
+  canvas{ background:var(--bg); border:1px solid var(--lijn); border-radius:8px; width:100%; max-width:640px; touch-action:none; display:block; }
+  .tip{ color:var(--gedempt); font-size:12px; line-height:1.5; margin-top:8px; }
+  #meld{ position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--paneel); border:1px solid var(--accent); border-radius:8px; padding:10px 18px; font-size:13px; display:none; z-index:9; }
+</style>
+</head>
+<body>
+<header>
+  <span class="badge">RL</span>
+  <div><h1>AR-server</h1><div class="sub">Voor de laptop: koppelingen met de echte robotarmen en de omgeving. Geen AR nodig.</div></div>
+  <a href="ur5-ar-viewer.html">AR-werkruimte (HoloLens) →</a>
+</header>
+
+<main>
+  <section id="verbinding">
+    <h2>Server starten</h2>
+    <label for="bridgeAdres">Bridge op deze laptop</label>
+    <input id="bridgeAdres" placeholder="ws://localhost:9090" spellcheck="false" autocomplete="off">
+    <label for="sessieNaam">Naam van de sessie</label>
+    <input id="sessieNaam" maxlength="40" placeholder="bijv. RoboLab les 3" spellcheck="false" autocomplete="off">
+    <div class="rij" style="margin-top:12px;">
+      <button id="verbindBtn">Server starten</button>
+      <button id="stopBtn" class="gevaar" style="display:none;">Sessie sluiten (voor iedereen)</button>
+    </div>
+    <div class="status" id="status">nog niet verbonden</div>
+    <div class="tip">De laptop is de server: hier maak je de koppelingen met de robotarmen. In AR is hij geen speler en heeft hij geen personage. Clients vinden de sessie in de buurt.</div>
+  </section>
+
+  <section id="fysiek">
+    <h2>Echte robotarmen</h2>
+    <table><thead><tr><th>Robot</th><th>IP-adres</th><th>Bridge-poort</th><th>Gekoppeld aan</th></tr></thead><tbody id="fysiekRijen"><tr><td colspan="4" class="sub">Nog niet verbonden.</td></tr></tbody></table>
+    <div class="tip">Elke robot die je bij het starten van de bridge meegeeft staat hier. Een nieuwe robotarm? Start de bridge opnieuw met zijn IP-adres erbij.</div>
+  </section>
+
+  <section id="koppelingen" class="breed">
+    <h2>Koppelingen: virtuele robot ↔ echte robotarm</h2>
+    <table><thead><tr><th>Virtuele robot (in de AR-omgeving)</th><th>Gekoppeld aan echte arm</th><th>Toestand</th></tr></thead><tbody id="koppelRijen"><tr><td colspan="3" class="sub">Nog niet verbonden.</td></tr></tbody></table>
+    <label style="display:flex; gap:10px; align-items:center; margin-top:12px; color:var(--tekst);"><input type="checkbox" id="clientKoppelen" style="width:auto;"> Clients mogen koppelingen aanpassen (in het venster bij de robot)</label>
+    <div class="tip">Een echte arm hoort bij één virtuele robot. Wie de koppeling aanpast, ziet het meteen bij iedereen. Een robot zonder koppeling is virtueel: die beweegt alleen in AR.</div>
+  </section>
+
+  <section id="omgeving" class="breed">
+    <h2>Omgeving</h2>
+    <div class="rij" style="align-items:flex-start; gap:24px;">
+      <div style="flex:1 1 360px; min-width:320px;">
+        <canvas id="plan" width="640" height="440"></canvas>
+        <div class="tip">Bovenaanzicht. De gele cirkel is de ijk-robot (het ijkpunt waar iedereen zijn AR-wereld op uitlijnt). Sleep een onderdeel om het te verplaatsen.</div>
+      </div>
+      <div style="flex:1 1 380px; min-width:320px;">
+        <label for="werkBestand" style="margin-top:0">Werkruimte importeren (.json uit de werkruimte-pagina)</label>
+        <input type="file" id="werkBestand" accept=".json,application/json">
+        <div class="rij" style="margin-top:8px;"><span class="sub">Ijk-robot</span><select id="werkAnker"></select></div>
+        <div class="rij" style="margin-top:12px;">
+          <span class="sub">Toevoegen:</span>
+          <button class="rand" data-nieuw="robot">+ Robot</button><button class="rand" data-nieuw="tafel">+ Tafel</button><button class="rand" data-nieuw="blok">+ Blokje</button>
+          <button class="rand" data-nieuw="zone">+ Doelplek</button><button class="rand" data-nieuw="plc">+ PLC</button><button class="rand" data-nieuw="sensor">+ Sensor</button>
+        </div>
+        <label for="sokkel">Hoogte van de robotvoet boven de vloer (cm)</label>
+        <input id="sokkel" type="number" min="0" max="300" step="1" value="0" style="width:100px;">
+        <div class="status" id="omgStatus">Nog geen werkruimte geladen.</div>
+      </div>
+    </div>
+    <table style="margin-top:14px;"><thead><tr><th>Onderdeel</th><th>Soort</th><th>x (mm)</th><th>z (mm)</th><th></th></tr></thead><tbody id="itemRijen"></tbody></table>
+  </section>
+
+  <section id="mensen">
+    <h2>Wie doet mee</h2>
+    <div id="deelnemers" class="sub">Niemand verbonden.</div>
+  </section>
+</main>
+<div id="meld"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const bewaar = (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} };
+const lees = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
+
+/* ---------- verbinding ---------- */
+let ws = null, wilVerbonden = false, herverbind = null, mijnId = null, hostId = null, sluitGewapend = 0;
+let koppelingen = {}, fysiek = [], eigenNr = null, clientKoppelen = true, aanwezig = [];
+let omgItems = [], omgNaam0 = "Robot 1", sokkelM = 0, omgSelectie = null, omgVuil = false, werkGelezen = null;
+
+$("bridgeAdres").value = lees("host_bridge") || ((location.protocol === "https:" ? "wss://" : "ws://") + (location.hostname && location.protocol !== "file:" ? location.hostname : "localhost") + ":9090");
+$("sessieNaam").value = lees("host_sessie") || "RoboLab sessie";
+function status(t, cls){ const e = $("status"); e.textContent = t; e.className = "status " + (cls || ""); }
+function meld(t){ const e = $("meld"); e.textContent = t; e.style.display = "block"; clearTimeout(meld.t); meld.t = setTimeout(() => e.style.display = "none", 5000); }
+const open = () => !!(ws && ws.readyState === WebSocket.OPEN);
+const stuur = o => { if(open()){ ws.send(JSON.stringify(o)); return true; } return false; };
+
+function verbind(){
+  const adres = $("bridgeAdres").value.trim(); if(!adres){ status("vul het adres van de bridge in", "err"); return; }
+  bewaar("host_bridge", adres); bewaar("host_sessie", $("sessieNaam").value.trim());
+  wilVerbonden = true; clearTimeout(herverbind);
+  if(ws){ const w = ws; ws = null; try{ w.close(); }catch(e){} }
+  status("verbinden …");
+  let w; try{ w = new WebSocket(adres); }catch(e){ status("ongeldig adres: " + e.message, "err"); return; }
+  ws = w;
+  w.onopen = () => {
+    stuur({ type:"hallo", naam:"Server", rol:"host", sessie:$("sessieNaam").value.trim() });
+    $("verbindBtn").textContent = "Opnieuw verbinden"; $("stopBtn").style.display = "";
+    setTimeout(() => { if(omgItems.length) omgVuil = true; }, 600);   // na een herstart de omgeving opnieuw aanbieden
+  };
+  w.onclose = () => {
+    if(ws !== w) return;
+    status("verbinding verbroken" + (wilVerbonden ? " — opnieuw proberen …" : ""), "warn");
+    mijnId = null; hostId = null; aanwezig = []; teken();
+    if(wilVerbonden) herverbind = setTimeout(verbind, 3000);
+  };
+  w.onerror = () => status("kan de bridge niet bereiken — draait hij, en klopt het adres?", "err");
+  w.onmessage = ev => { let m; try{ m = JSON.parse(ev.data); }catch{ return; } bericht(m); };
+}
+function bericht(m){
+  if(m.type === "aanwezig"){
+    mijnId = m.jij; hostId = m.hostId; aanwezig = m.lijst || [];
+    if(hostId === mijnId) status("Server draait — sessie “" + (m.sessie || "") + "”. Clients kunnen meedoen.", "ok");
+    else status("Er is al een andere server (host) voor deze bridge. Jij kijkt alleen mee.", "warn");
+    tekenMensen(); zetKnoppen();
+  } else if(m.type === "koppelingen"){
+    koppelingen = m.lijst || {}; fysiek = m.fysiek || []; eigenNr = m.eigenNr; clientKoppelen = m.clientKoppelen !== false;
+    tekenKoppelingen();
+  } else if(m.type === "melding"){ meld(m.tekst); }
+  else if(m.type === "deel" && m.soort === "omgeving" && m.van === 0 && m.data && Array.isArray(m.data.items) && !omgItems.length){
+    /* de bridge onthoudt de omgeving: na een herstart van deze pagina halen we die terug */
+    omgItems = m.data.items; omgNaam0 = m.data.naam0 || "Robot 1"; if(typeof m.data.sokkel === "number"){ sokkelM = m.data.sokkel; $("sokkel").value = Math.round(sokkelM*100); }
+    omgStatus(); tekenKoppelingen(); tekenItems(); teken();
+  } else if(m.type === "sessieGesloten"){ meld("Sessie gesloten"); }
+}
+const ikBenHost = () => open() && hostId === mijnId;
+function zetKnoppen(){ $("stopBtn").style.display = open() ? "" : "none"; }
+$("verbindBtn").onclick = verbind;
+$("stopBtn").onclick = () => {
+  if(performance.now() < sluitGewapend){ stuur({ type:"sessieSluiten" }); sluitGewapend = 0; $("stopBtn").textContent = "Sessie sluiten (voor iedereen)"; }
+  else { sluitGewapend = performance.now() + 4000; $("stopBtn").textContent = "Zeker? Nog een keer drukken"; setTimeout(() => { if(performance.now() >= sluitGewapend) $("stopBtn").textContent = "Sessie sluiten (voor iedereen)"; }, 4100); }
+};
+
+/* ---------- koppelingen ---------- */
+function virtueleRobots(){ return [{ id:"r0", naam: omgNaam0 + " (ijk-robot)" }, ...omgItems.filter(i => i.soort === "robot").map(i => ({ id:i.id, naam:i.naam }))]; }
+function tekenKoppelingen(){
+  const fr = $("fysiekRijen"); fr.textContent = "";
+  if(!fysiek.length){ fr.innerHTML = '<tr><td colspan="4" class="sub">Nog niet verbonden.</td></tr>'; }
+  const rij = (cel) => { const tr = document.createElement("tr"); cel.forEach(c => { const td = document.createElement("td"); if(c instanceof Node) td.appendChild(c); else td.textContent = c; tr.appendChild(td); }); return tr; };
+  const virt = virtueleRobots();
+  for(const f of fysiek){
+    const slotId = Object.keys(koppelingen).find(r => koppelingen[r] === f.nr);
+    const v = virt.find(x => x.id === slotId);
+    fr.appendChild(rij([f.naam, f.ip, String(f.poort), v ? v.naam : "—"]));
+  }
+  const kr = $("koppelRijen"); kr.textContent = "";
+  for(const v of virt){
+    const sel = document.createElement("select"); sel.disabled = !ikBenHost();
+    const o0 = document.createElement("option"); o0.value = ""; o0.textContent = "geen (virtueel)"; sel.appendChild(o0);
+    for(const f of fysiek){ const o = document.createElement("option"); o.value = f.nr; o.textContent = f.naam + " · " + f.ip; sel.appendChild(o); }
+    const nu = koppelingen[v.id]; sel.value = nu === undefined ? "" : String(nu);
+    sel.onchange = () => { stuur({ type:"koppel", r:v.id, nr: sel.value === "" ? null : +sel.value }); };
+    const f = nu === undefined ? null : fysiek.find(x => x.nr === nu);
+    const toest = document.createElement("span"); toest.innerHTML = f ? '<span class="punt aan"></span>gekoppeld aan ' + f.naam : '<span class="punt"></span>virtueel';
+    kr.appendChild(rij([v.naam, sel, toest]));
+  }
+  $("clientKoppelen").checked = clientKoppelen; $("clientKoppelen").disabled = !ikBenHost();
+}
+$("clientKoppelen").onchange = () => stuur({ type:"koppelRechten", aan: $("clientKoppelen").checked });
+function tekenMensen(){
+  const lijst = aanwezig.filter(d => d.id !== mijnId);
+  $("deelnemers").innerHTML = lijst.length ? lijst.map(d => '<div style="margin:4px 0; color:var(--tekst)"><span class="punt" style="background:' + d.kleur + '"></span>' + d.naam.replace(/</g, "&lt;") + (d.host ? " (server)" : "") + "</div>").join("") : "Nog geen clients.";
+}
+
+/* ---------- omgeving (zelfde model als de AR-viewer) ---------- */
+const WERK_VELDEN = ["id","soort","naam","x","y","z","rx","ry","rz","b","d","h","kleur","q","montage","ouder","sensorType"];
+const rad = g => (+g || 0) * Math.PI/180;
+function matDrie(rx, ry, rz){
+  const cx=Math.cos(rx), sx=Math.sin(rx), cy=Math.cos(ry), sy=Math.sin(ry), cz=Math.cos(rz), sz=Math.sin(rz);
+  return [[cz*cy, cz*sy*sx - sz*cx, cz*sy*cx + sz*sx],[sz*cy, sz*sy*sx + cz*cx, sz*sy*cx - cz*sx],[-sy, cy*sx, cy*cx]];
+}
+const mat3T = a => [[a[0][0],a[1][0],a[2][0]],[a[0][1],a[1][1],a[2][1]],[a[0][2],a[1][2],a[2][2]]];
+const mat3Mul = (a,b) => a.map((r,i) => [0,1,2].map(j => r[0]*b[0][j] + r[1]*b[1][j] + r[2]*b[2][j]));
+const mat3Vec = (a,v) => a.map(r => r[0]*v[0] + r[1]*v[1] + r[2]*v[2]);
+const C_WERK = [[1,0,0],[0,0,1],[0,-1,0]];
+const r4 = x => Math.round(x*10000)/10000;
+function itemsUitWerkruimte(objecten, ankerId){
+  const anker = objecten.find(o => o.id === ankerId && o.soort === "robot"); if(!anker) return null;
+  const RrT = mat3T(matDrie(rad(anker.rx), rad(anker.ry), rad(anker.rz)));
+  const pr = [(+anker.x||0)/1000, (+anker.y||0)/1000, ((+anker.z||0) + (+anker.montage||0))/1000];
+  const items = [];
+  for(const o of objecten){
+    if(!o || o.id === anker.id) continue;
+    const Rw = matDrie(rad(o.rx), rad(o.ry), rad(o.rz));
+    const pw = [(+o.x||0)/1000, (+o.y||0)/1000, (+o.z||0)/1000];
+    const pRel = mat3Vec(RrT, [pw[0]-pr[0], pw[1]-pr[1], pw[2]-pr[2]]);
+    const M3 = mat3Mul(mat3Mul(C_WERK, mat3Mul(RrT, Rw)), mat3T(C_WERK));
+    const t3 = mat3Vec(C_WERK, pRel);
+    const m = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1];
+    for(let r = 0; r < 3; r++) for(let c = 0; c < 3; c++) m[c*4 + r] = r4(M3[r][c]);
+    m[12] = r4(t3[0]); m[13] = r4(t3[1]); m[14] = r4(t3[2]);
+    items.push({ id:String(o.id), soort:String(o.soort), naam:String(o.naam || o.id).slice(0, 24), kleur:o.kleur || "#8a929c",
+      b:+o.b || 50, d:+o.d || 50, h:+o.h || 50, montage:+o.montage || 0, q: o.soort === "robot" && Array.isArray(o.q) ? o.q.map(Number) : undefined, m });
+  }
+  return { items, naam0:String(anker.naam || "Robot 1").slice(0, 24), montage0:+anker.montage || 0 };
+}
+$("werkBestand").onchange = async () => {
+  const f = $("werkBestand").files[0]; if(!f) return;
+  try{
+    const d = JSON.parse(await f.text());
+    const objecten = (Array.isArray(d.objecten) ? d.objecten : []).filter(o => o && typeof o.soort === "string").map(o => { const k = {}; for(const v of WERK_VELDEN) if(o[v] !== undefined) k[v] = o[v]; return k; });
+    if(!objecten.length) throw new Error("er staan geen onderdelen in dit bestand");
+    const robots = objecten.filter(o => o.soort === "robot");
+    if(!robots.length) throw new Error("er staat geen robot in deze werkruimte, en de robot is het ijkpunt");
+    werkGelezen = objecten;
+    $("werkAnker").textContent = "";
+    robots.forEach(r => { const o = document.createElement("option"); o.value = r.id; o.textContent = r.naam || r.id; $("werkAnker").appendChild(o); });
+    importeer();
+  }catch(e){ $("omgStatus").textContent = "Kon het bestand niet openen: " + e.message; $("omgStatus").className = "status err"; }
+  $("werkBestand").value = "";
+};
+$("werkAnker").onchange = importeer;
+function importeer(){
+  const res = werkGelezen ? itemsUitWerkruimte(werkGelezen, $("werkAnker").value) : null; if(!res) return;
+  omgItems = res.items; omgNaam0 = res.naam0; sokkelM = res.montage0/1000; $("sokkel").value = Math.round(res.montage0/10);
+  omgSelectie = null; omgVuil = true; omgStatus(); tekenKoppelingen(); tekenItems(); teken();
+}
+$("sokkel").onchange = () => { sokkelM = Math.max(0, Math.min(300, +$("sokkel").value || 0))/100; omgVuil = true; };
+const ITEM_STD = {
+  robot:{ b:170, d:170, h:0, kleur:"#8a929c", naam:"UR5e", montage:0 }, tafel:{ b:900, d:600, h:350, kleur:"#5b6572", naam:"Tafel" },
+  blok:{ b:55, d:55, h:55, kleur:"#d98e32", naam:"Blokje" }, zone:{ b:110, d:110, h:2, kleur:"#3ecf8e", naam:"Doelplek" },
+  plc:{ b:300, d:200, h:450, kleur:"#8a929c", naam:"PLC" }, sensor:{ b:28, d:28, h:60, kleur:"#8a929c", naam:"Sensor" },
+};
+let teller = 0;
+document.querySelectorAll("[data-nieuw]").forEach(b => b.onclick = () => {
+  const soort = b.dataset.nieuw, std = ITEM_STD[soort]; teller++;
+  const tel = omgItems.filter(x => x.soort === soort).length + (soort === "robot" ? 2 : 1);
+  const it = { id:"x" + Date.now().toString(36) + teller, soort, naam:std.naam + " " + tel, kleur:std.kleur, b:std.b, d:std.d, h:std.h, montage:std.montage || 0,
+    q: soort === "robot" ? [0,-90,0,-90,0,0] : undefined, m:[1,0,0,0, 0,1,0,0, 0,0,1,0, r4(0.5 + 0.15*(teller % 4)), r4(-sokkelM + (std.montage || 0)/1000), r4(-0.6), 1] };
+  omgItems.push(it); omgSelectie = it.id; omgVuil = true; omgStatus(); tekenKoppelingen(); tekenItems(); teken();
+});
+function omgStatus(){
+  const n = omgItems.length;
+  $("omgStatus").className = "status";
+  $("omgStatus").textContent = n ? n + " onderdelen in de omgeving. Ijk-robot: " + omgNaam0 + "." : "Nog geen werkruimte geladen.";
+}
+function tekenItems(){
+  const tb = $("itemRijen"); tb.textContent = "";
+  for(const it of omgItems){
+    const tr = document.createElement("tr"); if(it.id === omgSelectie) tr.className = "gekozen";
+    const naam = document.createElement("input"); naam.value = it.naam; naam.maxLength = 24; naam.style.width = "150px";
+    naam.onchange = () => { it.naam = naam.value.trim().slice(0, 24) || it.naam; omgVuil = true; tekenKoppelingen(); teken(); };
+    const maakGetal = (i) => { const e = document.createElement("input"); e.type = "number"; e.step = "10"; e.style.width = "90px"; e.value = Math.round(it.m[i]*1000);
+      e.onchange = () => { it.m[i] = r4((+e.value || 0)/1000); omgVuil = true; teken(); }; return e; };
+    const draai = document.createElement("button"); draai.className = "rand"; draai.textContent = "↻ 90°"; draai.onclick = () => { draaiItem(it, 90); tekenItems(); };
+    const weg = document.createElement("button"); weg.className = "gevaar"; weg.textContent = "✕"; weg.onclick = () => { omgItems = omgItems.filter(x => x !== it); if(omgSelectie === it.id) omgSelectie = null; omgVuil = true; omgStatus(); tekenKoppelingen(); tekenItems(); teken(); };
+    const celTd = (inh) => { const td = document.createElement("td"); if(inh instanceof Node) td.appendChild(inh); else td.textContent = inh; return td; };
+    tr.append(celTd(naam), celTd(it.soort), celTd(maakGetal(12)), celTd(maakGetal(14)));
+    const act = document.createElement("td"); act.append(draai, " ", weg); tr.appendChild(act);
+    tr.onclick = ev => { if(ev.target.tagName === "TR" || ev.target.tagName === "TD"){ omgSelectie = it.id; tekenItems(); teken(); } };
+    tb.appendChild(tr);
+  }
+}
+function draaiItem(it, graden){
+  const a = graden*Math.PI/180, c = Math.cos(a), s = Math.sin(a), m = it.m;
+  const c0 = [m[0], m[1], m[2]], c2 = [m[8], m[9], m[10]];
+  for(let r = 0; r < 3; r++){ m[r] = r4(c*c0[r] - s*c2[r]); m[8 + r] = r4(s*c0[r] + c*c2[r]); }
+  omgVuil = true; teken();
+}
+setInterval(() => { if(omgVuil && ikBenHost()){ omgVuil = false; stuur({ type:"deel", soort:"omgeving", data:{ items: omgItems.map(i => ({ id:i.id, soort:i.soort, naam:i.naam, kleur:i.kleur, b:i.b, d:i.d, h:i.h, montage:i.montage, q:i.q, m:i.m.map(r4) })), naam0: omgNaam0, sokkel: sokkelM } }); } }, 300);
+
+/* ---------- bovenaanzicht ---------- */
+const cv = $("plan"), g = cv.getContext("2d"), SCHAAL = 130;   // pixels per meter
+const naarScherm = (x, z) => [cv.width/2 + x*SCHAAL, cv.height*0.55 + z*SCHAAL];
+function teken(){
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.strokeStyle = "#2A3340"; g.lineWidth = 1; g.fillStyle = "#8B95A5"; g.font = "11px Arial";
+  for(let x = -2; x <= 2; x += 0.5){ const [px] = naarScherm(x, 0); g.beginPath(); g.moveTo(px, 0); g.lineTo(px, cv.height); g.stroke(); if(Number.isInteger(x)) g.fillText(x + " m", px + 3, 12); }
+  for(let z = -2; z <= 1.5; z += 0.5){ const [, pz] = naarScherm(0, z); g.beginPath(); g.moveTo(0, pz); g.lineTo(cv.width, pz); g.stroke(); }
+  for(const it of omgItems){
+    const m = it.m, hb = it.b/2000, hd = it.d/2000;
+    const hoeken = [[-hb,-hd],[hb,-hd],[hb,hd],[-hb,hd]].map(([lx, lz]) => naarScherm(m[0]*lx + m[8]*lz + m[12], m[2]*lx + m[10]*lz + m[14]));
+    g.beginPath(); hoeken.forEach(([px, pz], i) => i ? g.lineTo(px, pz) : g.moveTo(px, pz)); g.closePath();
+    const robot = it.soort === "robot";
+    g.fillStyle = robot ? "rgba(90,184,212,.35)" : (it.kleur || "#8a929c") + "99"; g.fill();
+    g.strokeStyle = it.id === omgSelectie ? "#E6007E" : "#E8ECF2"; g.lineWidth = it.id === omgSelectie ? 3 : 1; g.stroke();
+    const [cx, cz] = naarScherm(m[12], m[14]);
+    g.fillStyle = "#E8ECF2"; g.font = "12px Arial"; g.textAlign = "center"; g.fillText(it.naam, cx, cz + 4); g.textAlign = "left";
+  }
+  const [ox, oz] = naarScherm(0, 0);
+  g.fillStyle = "#E6A117"; g.beginPath(); g.arc(ox, oz, 15, 0, Math.PI*2); g.fill();
+  g.fillStyle = "#12161D"; g.font = "bold 11px Arial"; g.textAlign = "center"; g.fillText("IJK", ox, oz + 4); g.textAlign = "left";
+}
+let sleep = null;
+const muisPos = ev => { const r = cv.getBoundingClientRect(); return [(ev.clientX - r.left)*cv.width/r.width, (ev.clientY - r.top)*cv.height/r.height]; };
+cv.onpointerdown = ev => {
+  const [px, pz] = muisPos(ev); let best = null, bd = 1e9;
+  for(const it of omgItems){ const [cx, cz] = naarScherm(it.m[12], it.m[14]); const d = Math.hypot(cx - px, cz - pz); const straal = Math.max(18, Math.min(it.b, it.d)*SCHAAL/2000); if(d < straal && d < bd){ bd = d; best = it; } }
+  if(best){ omgSelectie = best.id; sleep = { it: best, dx: best.m[12] - (px - cv.width/2)/SCHAAL, dz: best.m[14] - (pz - cv.height*0.55)/SCHAAL }; cv.setPointerCapture(ev.pointerId); tekenItems(); teken(); }
+};
+cv.onpointermove = ev => { if(!sleep) return; const [px, pz] = muisPos(ev); sleep.it.m[12] = r4(Math.round(((px - cv.width/2)/SCHAAL + sleep.dx)*100)/100); sleep.it.m[14] = r4(Math.round(((pz - cv.height*0.55)/SCHAAL + sleep.dz)*100)/100); omgVuil = true; teken(); };
+cv.onpointerup = () => { if(sleep){ sleep = null; tekenItems(); } };
+
+/* terugkomen: de laatst gebruikte server weer starten */
+teken(); tekenKoppelingen(); tekenItems();
+if(lees("host_auto") === "1") verbind();
+$("verbindBtn").addEventListener("click", () => bewaar("host_auto", "1"));
+</script>
+</body>
+</html>

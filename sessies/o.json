@@ -1,0 +1,55 @@
+{
+  "versie": 1,
+  "naam": "o",
+  "bronnen": [],
+  "componenten": [
+    {
+      "id": "cilinder_in",
+      "naam": "cilinder_in",
+      "soort": "onderdeel",
+      "model": {
+        "type": "step",
+        "bestand": "cilinder_in.STEP"
+      },
+      "positie": {
+        "x": 0.2,
+        "y": 0,
+        "z": 0
+      },
+      "rotatieGraden": {
+        "x": 0.2,
+        "y": 0,
+        "z": 0
+      },
+      "ledematen": [
+        {
+          "id": "L2",
+          "naam": "161267 DZF-32-80-A-P-A---(KS)_Features.STEP",
+          "ouder": "L1",
+          "onderdelen": [
+            "161267 DZF-32-80-A-P-A---(KS)_Features.STEP"
+          ],
+          "gewricht": {
+            "type": "prismatic",
+            "as": {
+              "x": -4.9628990048815485e-17,
+              "y": -2.982462760241529e-17,
+              "z": 1
+            },
+            "pivot": {
+              "x": 0,
+              "y": 0,
+              "z": -0.016254247261465272
+            },
+            "min": 0,
+            "max": 81.53,
+            "eenheid": "mm",
+            "waarde": 0
+          }
+        }
+      ]
+    }
+  ],
+  "aangemaakt": "2026-10-07T07:34:20.854Z",
+  "gewijzigd": "2026-10-07T07:34:20.855Z"
+}

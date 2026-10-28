@@ -88,13 +88,17 @@ const readline = require("readline");
 const WebSocket = require("ws");
 const NodeS7 = require("nodes7");
 
-/* node-snap7 is optioneel — alleen nodig voor STOP/RUN. Ontbreekt de
-   library of lukt het laden niet (bijv. geen compiler beschikbaar),
-   dan blijft de rest van de bridge gewoon werken; STOP/RUN geeft dan
-   een duidelijke foutmelding i.p.v. de hele bridge te laten crashen. */
+/* STOP/RUN van de CPU: eerst node-snap7 (de geverifieerde C++-library) als die
+   te laden is. Lukt dat niet — bijv. omdat er geen compiler is of geen admin-
+   rechten, een veelvoorkomend probleem op Windows — dan valt de bridge terug
+   op s7-besturing.js: dezelfde drie commando's in gewoon JavaScript, zonder
+   installatie. Zo werkt STOP/RUN altijd, ook zonder node-snap7.            */
 let Snap7 = null;
 try { Snap7 = require("node-snap7"); }
-catch { console.log('[plc/bridge] node-snap7 niet gevonden — STOP/RUN is uitgeschakeld ("npm install node-snap7" om dat aan te zetten). De rest werkt gewoon door.'); }
+catch (e) { console.log(`[plc/bridge] node-snap7 niet beschikbaar (${String(e.message).split("\n")[0]}) — STOP/RUN gebruikt de ingebouwde JavaScript-variant.`); }
+let s7Besturing = null;
+try { s7Besturing = require("./s7-besturing.js").s7Besturing; }
+catch { /* s7-besturing.js ontbreekt naast dit bestand — dan blijft STOP/RUN afhankelijk van node-snap7 */ }
 
 /* ------------------ Instellingen ------------------ */
 const WS_POORT = +(process.env.WS_POORT || 9190);   // bewust een andere reeks dan de robot-bridge (9090+), zodat ze nooit kunnen botsen
@@ -111,18 +115,79 @@ const TLS_KEY = process.env.TLS_KEY || "key.pem";
    bit:         alleen bij type "bool" — welk bitje in dat byte (0-7)
    type:        "bool" | "byte" | "int" (16-bit) | "dint" (32-bit) | "real" (32-bit float)
    schrijfbaar: mag de webapp dit signaal beschrijven? (standaard: alleen lezen)        */
+/* ---- Hulpfuncties om snel een rij signalen te maken ---- */
+function digitaleIngangen(groep, startByte, aantal, naamVoor) {
+  // aantal bits vanaf byte "startByte", bit 0; alleen lezen (een ingang kun je vanaf hier niet "indrukken")
+  return Array.from({ length: aantal }, (_, i) => ({
+    groep, naam: `${naamVoor}${startByte + Math.floor(i / 8)}.${i % 8}`, gebied: "ingang",
+    adres: startByte + Math.floor(i / 8), bit: i % 8, type: "bool", schrijfbaar: false,
+  }));
+}
+function digitaleUitgangen(groep, startByte, aantal, naamVoor) {
+  return Array.from({ length: aantal }, (_, i) => ({
+    groep, naam: `${naamVoor}${startByte + Math.floor(i / 8)}.${i % 8}`, gebied: "uitgang",
+    adres: startByte + Math.floor(i / 8), bit: i % 8, type: "bool", schrijfbaar: true,
+  }));
+}
+
+/* ---- CPU 1215C DC/DC/DC (6ES7 215-1AG40-0XB0): vaste, ingebouwde adressen ---- */
+const ONBOARD = [
+  ...digitaleIngangen("CPU ingangen (DI a/b)", 0, 14, "I"),            // I0.0-I0.7 en I1.0-I1.5
+  ...digitaleUitgangen("CPU uitgangen (DQ a/b)", 0, 10, "Q"),          // Q0.0-Q0.7 en Q1.0-Q1.1
+  { groep: "CPU analoog", naam: "AI0 (IW64)", gebied: "ingang", adres: 64, type: "int", schrijfbaar: false },  // 0-10 V = 0..27648
+  { groep: "CPU analoog", naam: "AI1 (IW66)", gebied: "ingang", adres: 66, type: "int", schrijfbaar: false },
+  { groep: "CPU analoog", naam: "AQ0 (QW80)", gebied: "uitgang", adres: 80, type: "int", schrijfbaar: true },  // 0-20 mA = 0..27648
+  { groep: "CPU analoog", naam: "AQ1 (QW82)", gebied: "uitgang", adres: 82, type: "int", schrijfbaar: true },
+];
+
+/* ---- Uitbreidingsmodules: de adressen stel je in TIA Portal in (Device view -> module ->
+   Properties -> I/O addresses). Controleer ze en pas ze hier aan. "null" = module niet gebruikt. ---- */
+const DC_RLY = {          // SM 1223 DI/DQ DC/RLY — aantal kanalen: 8 of 16
+  beginIngangByte: 2,     // eerste ingangsbyte (I2.0 = 2)   <-- CONTROLEER IN TIA
+  beginUitgangByte: 2,    // eerste uitgangsbyte (Q2.0 = 2)  <-- CONTROLEER IN TIA
+  aantalIngangen: 8,
+  aantalUitgangen: 8,
+};
+const IO_LINK = {         // SM 1278 4xIO-Link master
+  beginIngangByte: null,  // eerste ingangsbyte van poort 1, bv. 8   <-- INVULLEN UIT TIA
+  beginUitgangByte: null, // eerste uitgangsbyte van poort 1, bv. 8  <-- INVULLEN UIT TIA
+  bytesInPerPoort: 2,     // procesdata-lengte ingang per poort (zoals in TIA ingesteld)
+  bytesUitPerPoort: 2,    // procesdata-lengte uitgang per poort
+};
+
+const MODULESIGNALEN = [];
+if (DC_RLY) {
+  MODULESIGNALEN.push(...digitaleIngangen("DC/RLY-module ingangen", DC_RLY.beginIngangByte, DC_RLY.aantalIngangen, "I"));
+  MODULESIGNALEN.push(...digitaleUitgangen("DC/RLY-module uitgangen (relais)", DC_RLY.beginUitgangByte, DC_RLY.aantalUitgangen, "Q"));
+}
+if (IO_LINK && IO_LINK.beginIngangByte !== null) {
+  for (let poort = 0; poort < 4; poort++) {
+    // Procesdata is vaak een 16-bit getal (big-endian, zo leest de PLC het): dan telt "int" als één waarde.
+    for (let w = 0; w < Math.floor(IO_LINK.bytesInPerPoort / 2); w++)
+      MODULESIGNALEN.push({ groep: "IO-Link ingangen", naam: `IOL poort ${poort + 1} in${w}`, gebied: "ingang",
+        adres: IO_LINK.beginIngangByte + poort * IO_LINK.bytesInPerPoort + w * 2, type: "int", schrijfbaar: false });
+    if (IO_LINK.bytesInPerPoort % 2 === 1)
+      MODULESIGNALEN.push({ groep: "IO-Link ingangen", naam: `IOL poort ${poort + 1} byte`, gebied: "ingang",
+        adres: IO_LINK.beginIngangByte + poort * IO_LINK.bytesInPerPoort + IO_LINK.bytesInPerPoort - 1, type: "byte", schrijfbaar: false });
+  }
+}
+if (IO_LINK && IO_LINK.beginUitgangByte !== null) {
+  for (let poort = 0; poort < 4; poort++)
+    for (let w = 0; w < Math.floor(IO_LINK.bytesUitPerPoort / 2); w++)
+      MODULESIGNALEN.push({ groep: "IO-Link uitgangen", naam: `IOL poort ${poort + 1} uit${w}`, gebied: "uitgang",
+        adres: IO_LINK.beginUitgangByte + poort * IO_LINK.bytesUitPerPoort + w * 2, type: "int", schrijfbaar: true });
+}
+if (IO_LINK && IO_LINK.beginIngangByte === null)
+  console.log("[plc/bridge] IO-Link-master staat nog uit: vul IO_LINK.beginIngangByte/beginUitgangByte in plc-bridge.js in (adressen uit TIA Portal).");
+
 const SIGNALEN = [
-  // Voorbeeld: een startknop-merker (M0.0), alleen uitlezen
-  // { naam: "startknop",        gebied: "merker", adres: 0, bit: 0, type: "bool", schrijfbaar: false },
+  ...ONBOARD,
+  ...MODULESIGNALEN,
 
-  // Voorbeeld: een motor-vrijgave in DB1, byte 0, bit 1 — de webapp mag 'm zetten
-  // { naam: "motorVrijgave",    gebied: "db", db: 1, adres: 0, bit: 1, type: "bool", schrijfbaar: true },
-
-  // Voorbeeld: een setpoint (16-bit geheel getal) in DB1 vanaf byte 2 — beschrijfbaar
-  // { naam: "setpointSnelheid", gebied: "db", db: 1, adres: 2, type: "int", schrijfbaar: true },
-
-  // Voorbeeld: een gemeten waarde (float) in DB1 vanaf byte 4 — alleen uitlezen
-  // { naam: "gemetenPositie",   gebied: "db", db: 1, adres: 4, type: "real", schrijfbaar: false },
+  // Eigen signalen uit een DB kun je hieronder toevoegen (zie de voorbeelden):
+  // { groep: "Programma", naam: "motorVrijgave",    gebied: "db", db: 1, adres: 0, bit: 1, type: "bool", schrijfbaar: true },
+  // { groep: "Programma", naam: "setpointSnelheid", gebied: "db", db: 1, adres: 2, type: "int", schrijfbaar: true },
+  // { groep: "Programma", naam: "gemetenPositie",   gebied: "db", db: 1, adres: 4, type: "real", schrijfbaar: false },
 ];
 
 if (SIGNALEN.length === 0) {
@@ -235,14 +300,14 @@ setInterval(() => {
   }
 
   if (!verbonden || SIGNALEN.length === 0) {
-    broadcast({ type: "plcData", verbonden: verbonden && SIGNALEN.length > 0, signalen: {} });
+    broadcast({ type: "plcData", verbonden: verbonden && SIGNALEN.length > 0, plcVerbonden: verbonden, signalen: {} });
     return;
   }
   conn.readAllItems((eenOfMeerFout, waarden) => {
     if (eenOfMeerFout) {
       console.log("[plc/io] één of meer signalen gaven een foutkwaliteit terug bij het lezen — zie de waarden hieronder");
     }
-    broadcast({ type: "plcData", verbonden: true, signalen: waarden });
+    broadcast({ type: "plcData", verbonden: true, plcVerbonden: true, signalen: waarden });
   });
 }, 1000 / POLL_HZ);
 
@@ -273,21 +338,39 @@ function metSnap7Verbinding(uitvoeren, klaar) {
 }
 
 function plcStop(klaar) {
+  if (!Snap7) return zonderSnap7("stop", "warm", klaar);
   metSnap7Verbinding((client, terug) => {
     client.PlcStop(err => terug(err ? new Error(client.ErrorText(err)) : null));
   }, klaar);
 }
 
 function plcStart(soort, klaar) {
+  if (!Snap7) return zonderSnap7("start", soort, klaar);
   metSnap7Verbinding((client, terug) => {
     const start = soort === "koud" ? client.PlcColdStart : client.PlcHotStart;
     start.call(client, err => terug(err ? new Error(client.ErrorText(err)) : null));
   }, klaar);
 }
 
+function zonderSnap7(commando, soort, klaar) {
+  if (!s7Besturing) return klaar(new Error('STOP/RUN niet beschikbaar: zet s7-besturing.js naast plc-bridge.js, of installeer node-snap7 ("npm install node-snap7")'));
+  s7Besturing({ ip: plcIp, rack: RACK, slot: SLOT, commando, soort }, klaar);
+}
+
 /* ------------------ Berichten van de webapp ------------------ */
 wss.on("connection", ws => {
   console.log("[plc/webapp] verbonden");
+  // Meteen de signaallijst meesturen, zodat de webapp zelf bedieningselementen
+  // kan opbouwen (schakelaar voor bool, invoerveld voor getallen) en weet
+  // welke signalen schrijfbaar zijn — zonder dat jij ze daar nog eens moet invullen.
+  // Huidige PLC-status ook meteen aan deze nieuwe webapp melden: de status-broadcast
+  // hierboven gaat alleen bij een VERANDERING uit, dus wie later verbindt zou anders
+  // eeuwig op "wacht op de PLC" blijven staan.
+  ws.send(JSON.stringify({ type: "status", plc: isVerbonden() ? "verbonden" : "verbroken" }));
+  ws.send(JSON.stringify({
+    type: "signalen",
+    lijst: SIGNALEN.map(s => ({ naam: s.naam, type: s.type, gebied: s.gebied, groep: s.groep || "", adres: s.adres, bit: s.bit, db: s.db, schrijfbaar: !!s.schrijfbaar })),
+  }));
   ws.on("message", data => {
     let msg;
     try { msg = JSON.parse(data); } catch { return; }

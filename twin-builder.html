@@ -1,0 +1,2434 @@
+<!DOCTYPE html>
+<!-- ============================================================
+     DIGITAL TWIN BUILDER — laag 1: CAD inladen + assembly bekijken
+     ============================================================
+     Gilde Opleidingen — RoboLab. Onderdeel van het Einstein
+     Telescoop-verkenningstraject digital twinning voor het MBO.
+
+     Deze eerste laag doet: STEP/IGES-bestand inladen (volledig in
+     de browser, via occt-import-js / OpenCascade-WASM), de
+     assembly-structuur tonen als boom, onderdelen selecteren en
+     markeren in 3D. Draaipunten toekennen en simuleren volgt in
+     een volgende laag, bovenop dit fundament.
+
+     Bestanden die in dezelfde map moeten staan:
+       - three.min.js          (3D-rendering)
+       - occt-import-js.js     (CAD-parser, JS-kant)
+       - occt-import-js.wasm   (CAD-parser, WASM-kant)
+     ============================================================ -->
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>Componenten bouwer — RoboLab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#0B0F1A; --panel:#121826; --panel2:#161E2E; --line:#232D40;
+    --text:#E7ECF5; --muted:#8B96AB; --ur:#E6007E; --ur-dim:#7A0F45;
+    --ok:#3ECF8E; --warn:#F0C070; --err:#FF6B6B;
+    --sim:#3FA8CC; --sim-dim:#0F4A5C;
+    --font-ui:'Segoe UI',Arial,sans-serif; --font-data:'Consolas',monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0; height:100%; background:var(--bg); color:var(--text); font-family:var(--font-ui); overflow:hidden;}
+  #app{display:flex; flex-direction:column; height:100%;}
+
+  header{
+    flex:0 0 auto; display:flex; align-items:center; gap:12px;
+    padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line);
+  }
+  header .logo{
+    width:30px; height:30px; border-radius:8px; background:var(--ur);
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:12px; flex:0 0 auto;
+  }
+  header h1{font-size:16px; margin:0; font-weight:600; letter-spacing:.01em;}
+  header h1 span{color:var(--muted); font-weight:400;}
+  header .status{
+    margin-left:auto; font-family:var(--font-data); font-size:11px; color:var(--muted);
+    padding:4px 10px; border:1px solid var(--line); border-radius:999px;
+  }
+
+  .tabbar{
+    display:flex; gap:2px; margin-left:24px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:9px; padding:3px;
+  }
+  .tab-btn{
+    background:none; border:none; color:var(--muted); font-family:var(--font-ui);
+    font-size:13px; font-weight:600; padding:6px 16px; border-radius:6px; cursor:pointer;
+  }
+  .tab-btn:hover{color:var(--text);}
+  .tab-btn.active{background:var(--ur); color:#fff;}
+  #tabSimulatie.active{background:var(--sim);}
+  .tab-hidden{display:none !important;}
+  #main.modus-simulatie #viewport{background:radial-gradient(ellipse at 50% 30%, #14232C 0%, #0B0F1A 70%);}
+  #main.modus-simulatie .btn.primary{background:var(--sim); border-color:var(--sim);}
+  #main.modus-simulatie .btn.primary:hover{background:#2E8AAB;}
+
+  #main{flex:1 1 auto; display:flex; min-height:0;}
+
+  /* ---------- 3D-viewport ---------- */
+  #viewport{flex:1 1 auto; position:relative; background:radial-gradient(ellipse at 50% 30%, #141B2C 0%, #0B0F1A 70%);}
+  #viewport canvas{display:block; width:100%; height:100%;}
+
+  #dropzone{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:14px; z-index:5; transition:background .15s;
+  }
+  #dropzone.dragover{background:rgba(230,0,126,0.08);}
+  #dropzone .icon{
+    width:64px; height:64px; border-radius:16px; border:2px dashed var(--line);
+    display:flex; align-items:center; justify-content:center; font-size:26px; color:var(--muted);
+  }
+  #dropzone p{margin:0; color:var(--muted); font-size:14px; text-align:center; max-width:340px; line-height:1.6;}
+  #dropzone .formats{font-family:var(--font-data); font-size:11px; color:var(--ur);}
+  #fileBtn{
+    background:var(--ur); color:#fff; border:none; border-radius:8px; padding:10px 22px;
+    font-size:14px; font-weight:600; cursor:pointer;
+  }
+  #fileBtn:hover{background:#c40069;}
+  #fileInput{display:none;}
+
+  #viewControls{
+    position:absolute; left:14px; bottom:14px; z-index:4; display:flex; gap:6px;
+  }
+  #camInfo{
+    position:absolute; right:14px; bottom:14px; z-index:4; font-family:var(--font-data);
+    font-size:11px; color:var(--muted); background:rgba(18,24,38,0.8); padding:6px 10px; border-radius:8px;
+    border:1px solid var(--line); pointer-events:none;
+  }
+  .btn{
+    background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:8px;
+    padding:7px 12px; font-size:12.5px; cursor:pointer; font-family:var(--font-ui);
+  }
+  .btn:hover{border-color:var(--ur);}
+  .btn.primary{background:var(--ur); border-color:var(--ur); color:#fff; font-weight:600;}
+  .btn.primary:hover{background:#c40069;}
+  .btn:disabled{opacity:.4; cursor:default;}
+
+  /* ---------- zijpaneel ---------- */
+  aside{
+    flex:0 0 320px; background:var(--panel); border-left:1px solid var(--line);
+    display:flex; flex-direction:column; min-height:0;
+    border-top:4px solid var(--ur); transition:border-color .15s;
+  }
+  aside.modus-simulatie{border-top-color:var(--sim);}
+  aside .panel-scroll{flex:1 1 auto; overflow-y:auto; padding:14px 14px 8px;}
+  aside h2{
+    font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+    margin:0 0 8px; padding-bottom:6px; border-bottom:1px solid var(--line);
+  }
+  aside .section{margin-bottom:18px;}
+
+  #modelMeta{font-family:var(--font-data); font-size:11.5px; color:var(--muted); line-height:1.7;}
+  #modelMeta b{color:var(--text); font-weight:500;}
+
+  /* boomstructuur */
+  #tree{font-size:13px;}
+  .node{user-select:none;}
+  .node-row{
+    display:flex; align-items:center; gap:5px; padding:4px 6px; border-radius:6px; cursor:pointer;
+  }
+  .node-row:hover{background:var(--panel2);}
+  .node-row.selected{background:var(--ur-dim); color:#fff;}
+  .node-row .chev{
+    width:14px; flex:0 0 auto; color:var(--muted); font-size:10px; transition:transform .12s; text-align:center;
+  }
+  .node-row.leaf .chev{visibility:hidden;}
+  .node-row .swatch{
+    width:9px; height:9px; border-radius:3px; flex:0 0 auto; border:1px solid rgba(255,255,255,.25);
+  }
+  .node-row .name{flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .node-row .count{font-family:var(--font-data); font-size:10px; color:var(--muted);}
+  .node-children{margin-left:16px; display:none;}
+  .node.open > .node-children{display:block;}
+  .node.open > .node-row .chev{transform:rotate(90deg);}
+
+  #selInfo{font-family:var(--font-data); font-size:11.5px; color:var(--muted); line-height:1.7;}
+  #selInfo b{color:var(--text); font-weight:500;}
+  #selInfo .empty{color:var(--muted); font-style:italic;}
+
+  .note{font-size:11.5px; color:var(--muted); line-height:1.6;}
+  .note code{color:var(--ur); font-family:var(--font-data);}
+
+  /* ---------- ledematen / joints / simulatie ---------- */
+  .link-row{
+    display:flex; align-items:center; gap:7px; padding:6px 8px; border-radius:8px;
+    background:var(--panel2); border:1px solid var(--line); margin-bottom:6px; cursor:pointer;
+  }
+  .link-row:hover{border-color:var(--ur);}
+  .link-row.selected{border-color:var(--ur); background:var(--ur-dim);}
+  .link-row .dot{width:10px; height:10px; border-radius:50%; flex:0 0 auto;}
+  .link-row .naam{flex:1 1 auto; font-size:12.5px; font-weight:600;}
+  .link-row .sub{font-size:10.5px; color:var(--muted); font-family:var(--font-data);}
+  .link-row .mini-btn{
+    font-size:10px; background:none; border:1px solid var(--line); color:var(--muted);
+    border-radius:5px; padding:2px 7px; cursor:pointer;
+  }
+  .link-row .mini-btn:hover{border-color:var(--ur); color:var(--text);}
+
+  .wizard-step{
+    background:var(--panel2); border:1px solid var(--ur-dim); border-radius:8px;
+    padding:10px; font-size:12px; line-height:1.6; margin-bottom:8px;
+  }
+  .wizard-step b{color:var(--ur);}
+  .wizard-row{display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;}
+  .wizard-row input[type=text], .wizard-row input[type=number], .wizard-row select{
+    background:var(--bg); border:1px solid var(--line); color:var(--text);
+    border-radius:6px; padding:6px 8px; font-size:12px; font-family:var(--font-ui);
+  }
+  .wizard-row label{font-size:11px; color:var(--muted); display:flex; align-items:center; gap:4px;}
+  .num-small{width:64px;}
+
+  .kin-item{padding:3px 0 3px 0; font-size:12.5px;}
+  .kin-item .tag{
+    font-family:var(--font-data); font-size:9.5px; color:var(--ur); background:var(--ur-dim);
+    border-radius:4px; padding:1px 5px; margin-left:6px;
+  }
+
+  .slider-row{margin-bottom:12px;}
+  .slider-row .lbl{display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;}
+  .slider-row .lbl b{color:var(--text); font-weight:600;}
+  .slider-row .lbl span{font-family:var(--font-data); color:var(--ur); font-size:11.5px;}
+  .slider-row input[type=range]{
+    width:100%; accent-color:var(--ur); background:transparent;
+  }
+
+  /* ---------- logbalk ---------- */
+  #logbar{
+    flex:0 0 88px; border-top:1px solid var(--line); background:var(--panel);
+    padding:8px 14px; overflow-y:auto; font-family:var(--font-data); font-size:11.5px;
+  }
+  #logbar .line{margin-bottom:3px; color:var(--muted);}
+  #logbar .ok{color:var(--ok);}
+  #logbar .warn{color:var(--warn);}
+  #logbar .err{color:var(--err);}
+  #logbar .time{color:#4A5568; margin-right:6px;}
+
+  /* laad-overlay tijdens parsen */
+  #laadScherm{
+    position:absolute; inset:0; z-index:8; display:none; align-items:center; justify-content:center;
+    flex-direction:column; gap:12px; background:rgba(11,15,26,0.88);
+  }
+  #laadScherm.actief{display:flex;}
+  .spinner{
+    width:34px; height:34px; border-radius:50%; border:3px solid var(--line); border-top-color:var(--ur);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+  #laadScherm p{margin:0; color:var(--muted); font-size:13px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="logo">DT</div>
+    <h1>Componenten bouwer <span>— CAD inladen &amp; assembly bekijken</span></h1>
+    <div class="tabbar">
+      <button class="tab-btn active" id="tabBewerken" data-tab="bewerken">Bewerken</button>
+      <button class="tab-btn" id="tabSimulatie" data-tab="simulatie">Simulatie</button>
+    </div>
+    <a href="index.html" style="margin-left:12px; color:var(--muted); font-size:12.5px; text-decoration:none; border:1px solid var(--line); border-radius:999px; padding:5px 14px; white-space:nowrap;">← Menu</a>
+    <div class="status" id="statusBadge">GEEN MODEL</div>
+  </header>
+
+  <div id="main">
+    <div id="viewport">
+      <div id="dropzone">
+        <div class="icon">⬆</div>
+        <p>Sleep een STEP- of IGES-bestand hierheen, of kies een bestand.<br>Alles wordt lokaal in de browser verwerkt — er gaat niets naar internet.</p>
+        <button id="fileBtn" class="btn">Bestand kiezen</button>
+        <input type="file" id="fileInput" accept=".step,.stp,.iges,.igs">
+        <div class="formats">.step · .stp · .iges · .igs</div>
+      </div>
+      <div id="viewControls">
+        <button class="btn" id="btnFit" disabled>Kader vullen</button>
+        <button class="btn" id="btnWire" disabled>Draadmodel</button>
+        <button class="btn" id="btnDoorzichtig" disabled>Doorzichtig</button>
+      </div>
+      <div id="camInfo">Slepen = draaien · Scrollen = zoomen · Middelste knop = pannen</div>
+      <div id="laadScherm">
+        <div class="spinner"></div>
+        <p id="laadTekst">CAD-kernel wordt geladen …</p>
+      </div>
+    </div>
+
+    <aside>
+      <div class="panel-scroll">
+        <div class="section" id="metaSection" style="display:none">
+          <h2>Model</h2>
+          <div id="modelMeta"></div>
+        </div>
+
+        <div class="section">
+          <h2>Assembly-structuur</h2>
+          <div id="tree"><span class="note">Nog geen model geladen.</span></div>
+        </div>
+
+        <div class="section">
+          <h2>Selectie</h2>
+          <div id="selInfo"><span class="empty">Klik een onderdeel aan in de boom of in 3D.</span></div>
+        </div>
+
+        <div class="section tab-bewerken" id="standaardvormenSection">
+          <h2>Standaardvormen</h2>
+          <p class="note">Geen CAD-bestand nodig — bouw een eenvoudige proefopstelling met basisvormen.</p>
+          <div class="wizard-row" style="margin-top:6px">
+            <button class="btn" data-vorm="blok">+ Blok</button>
+            <button class="btn" data-vorm="cilinder">+ Cilinder</button>
+            <button class="btn" data-vorm="bol">+ Bol</button>
+            <button class="btn" data-vorm="kegel">+ Kegel</button>
+            <button class="btn" data-vorm="plaat">+ Plaat</button>
+          </div>
+        </div>
+
+        <div class="section" id="rigSection" style="display:none">
+          <h2>Rig</h2>
+          <div class="wizard-row" style="margin-top:0">
+            <button class="btn" id="btnRigOpslaan">Rig opslaan (.json)</button>
+            <button class="btn" id="btnRigLaden">Rig laden (.json)</button>
+            <input type="file" id="rigInput" accept=".json" style="display:none">
+          </div>
+        </div>
+
+        <div class="section" id="sessieSection" style="display:none">
+          <h2>Sessie</h2>
+          <p class="note">Dit model (met zijn gewrichten) als component toevoegen aan een sessie op de session-server — zodat de AR-viewer en simulator het straks kunnen inladen.</p>
+          <div class="wizard-row" style="margin-top:8px">
+            <input type="text" id="sessieServerUrl" value="http://localhost:9290" style="flex:1" placeholder="http://localhost:9290">
+            <button class="btn" id="btnSessieVerbind">Verbinden</button>
+          </div>
+          <div id="sessieVerbindStatus" class="note" style="margin-top:4px"></div>
+
+          <div id="sessieFormulier" style="display:none">
+            <div class="wizard-row">
+              <label style="flex:1">Sessie
+                <select id="sessieKeuze" style="width:100%"></select>
+              </label>
+            </div>
+            <div class="wizard-row" id="sessieNieuweNaamRow" style="display:none">
+              <input type="text" id="sessieNieuweNaam" placeholder="Naam van de nieuwe sessie" style="flex:1">
+            </div>
+
+            <div class="wizard-row">
+              <input type="text" id="compNaam" placeholder="Naam van dit onderdeel" style="flex:1">
+            </div>
+            <div class="wizard-row">
+              <label>STEP-bestand <input type="text" id="compBestand" class="num-small" style="width:160px" placeholder="cilinder-1.step"></label>
+            </div>
+            <div class="wizard-row">
+              <label>Positie X <input type="number" id="compPosX" class="num-small" value="0" step="0.01"></label>
+              <label>Y <input type="number" id="compPosY" class="num-small" value="0" step="0.01"></label>
+              <label>Z <input type="number" id="compPosZ" class="num-small" value="0" step="0.01"></label>
+              <span class="note">meter</span>
+            </div>
+            <div class="wizard-row">
+              <label>Rotatie X <input type="number" id="compRotX" class="num-small" value="0" step="1"></label>
+              <label>Y <input type="number" id="compRotY" class="num-small" value="0" step="1"></label>
+              <label>Z <input type="number" id="compRotZ" class="num-small" value="0" step="1"></label>
+              <span class="note">graden</span>
+            </div>
+            <div class="wizard-row">
+              <button class="btn primary" id="btnComponentToevoegen" style="width:100%">+ Component toevoegen aan sessie</button>
+            </div>
+            <p class="note" id="sessieBestandHint" style="margin-top:6px"></p>
+          </div>
+        </div>
+
+        <div class="section tab-bewerken" id="ledematenSection" style="display:none">
+          <h2>Ledematen</h2>
+          <p class="note" id="groepeerHint">
+            Vink onderdelen aan in de boom hierboven en groepeer ze tot een star ledemaat.
+          </p>
+          <button class="btn" id="btnGroepeer" disabled style="width:100%; margin-bottom:8px;">+ Nieuw ledemaat van selectie (<span id="aantalAangevinkt">0</span>)</button>
+          <button class="btn" id="btnStepDiff" disabled style="width:100%; margin-bottom:8px;"
+                  title="Vink hierboven het bewegende onderdeel aan (bijv. de cilinderstang) en vergelijk met een 2e STEP-bestand van dezelfde assembly in de andere stand — het schuifgewricht (as + slag) wordt dan automatisch berekend.">
+            ⇄ Schuifgewricht uit 2e STEP-bestand
+          </button>
+          <input type="file" id="stepDiffInput" accept=".step,.stp,.iges,.igs" style="display:none">
+          <div id="ledematenLijst"></div>
+        </div>
+
+        <div class="section tab-bewerken" id="jointWizard" style="display:none">
+          <h2>Draaipunt instellen</h2>
+          <div id="jointWizardBody"></div>
+        </div>
+
+        <div class="section tab-bewerken" id="tcpWizard" style="display:none">
+          <h2>TCP plaatsen</h2>
+          <div id="tcpWizardBody"></div>
+        </div>
+
+        <div class="section" id="kinematischeBoomSection" style="display:none">
+          <h2>Kinematische boom</h2>
+          <div id="kinBoom" class="note"></div>
+        </div>
+
+        <div class="section tab-simulatie" id="simModelLaden">
+          <h2>Model laden</h2>
+          <p class="note">
+            Onafhankelijk van het Bewerken-scherm: laad hier een ander CAD-bestand
+            en/of een opgeslagen rig om meteen te simuleren.
+          </p>
+          <div class="wizard-row" style="margin-top:6px">
+            <button class="btn" id="btnSimStepKiezen">STEP/IGES kiezen</button>
+            <input type="file" id="simStepInput" accept=".step,.stp,.iges,.igs" style="display:none">
+          </div>
+          <div class="wizard-row" style="margin-top:6px">
+            <button class="btn primary" id="btnSimRigKiezen">Rig laden (.json)</button>
+          </div>
+        </div>
+
+        <div class="section tab-simulatie" id="simulatieSection" style="display:none">
+          <h2>Simulatie</h2>
+          <div class="wizard-row" style="margin-top:0; margin-bottom:8px">
+            <label><input type="checkbox" id="vrijeStandCb"> Vrije stand — sleep een ledemaat direct in 3D</label>
+          </div>
+          <div id="simSliders"></div>
+        </div>
+
+        <div class="section tab-simulatie" id="programmaSection" style="display:none">
+          <h2>Programma</h2>
+          <div class="wizard-row" style="margin-top:0">
+            <label style="flex:1">Snelheid
+              <input type="range" id="progSnelheid" min="10" max="100" value="60" style="width:100%; accent-color:var(--ur)">
+            </label>
+          </div>
+          <button class="btn primary" id="btnPoseVastleggen" style="width:100%; margin-bottom:8px;">+ Huidige pose vastleggen</button>
+          <div id="progLijst" class="note">Nog geen stappen.</div>
+          <div class="wizard-row" style="margin-top:8px">
+            <button class="btn" id="btnProgAfspelen">▶ Afspelen</button>
+            <button class="btn" id="btnProgStop" disabled>■ Stop</button>
+            <label style="font-size:11px; color:var(--muted); display:flex; align-items:center; gap:4px;">
+              <input type="checkbox" id="progHerhalen"> Herhalen
+            </label>
+          </div>
+          <div class="wizard-row" style="margin-top:8px">
+            <button class="btn" id="btnProgOpslaan">Programma opslaan</button>
+            <button class="btn" id="btnProgLaden">Programma laden</button>
+            <input type="file" id="progInput" accept=".json" style="display:none">
+          </div>
+        </div>
+
+        <div class="section" id="volgendeLaagNote">
+          <h2>Nog niet aanwezig</h2>
+          <p class="note">
+            Later volgt hier: sensoren, lopende banden, botsingsdetectie tussen
+            ledematen, en meerdere assemblages naast elkaar in één scène.
+          </p>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div id="logbar"></div>
+</div>
+
+<script src="three.min.js"></script>
+<script src="occt-import-js.js"></script>
+<script>
+/* ============================================================
+   0. Logbalk
+   ============================================================ */
+const logbar = document.getElementById("logbar");
+function log(html, soort){
+  const p = document.createElement("div");
+  p.className = "line" + (soort ? " " + soort : "");
+  const t = new Date().toLocaleTimeString("nl-NL", {hour12:false});
+  p.innerHTML = `<span class="time">${t}</span>${html}`;
+  logbar.appendChild(p);
+  logbar.scrollTop = logbar.scrollHeight;
+}
+function setStatus(tekst, kleur){
+  const b = document.getElementById("statusBadge");
+  b.textContent = tekst;
+  b.style.color = kleur || "";
+  b.style.borderColor = kleur || "";
+}
+
+/* ============================================================
+   1. Three.js basisscene
+   ============================================================ */
+const viewport = document.getElementById("viewport");
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+viewport.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+keyLight.position.set(3, 5, 4);
+scene.add(keyLight);
+const rimLight = new THREE.DirectionalLight(0x88aaff, 0.35);
+rimLight.position.set(-4, 2, -3);
+scene.add(rimLight);
+
+const grid = new THREE.GridHelper(2, 20, 0x2A3550, 0x1A2236);
+grid.visible = false;   // pas zichtbaar/geschaald zodra er een model is
+scene.add(grid);
+
+/* eenvoudige orbit-camera, zelfde bediening als de UR5e-twin */
+let target = new THREE.Vector3(0,0,0);
+let theta = 0.9, phi = 1.15, radius = 1.0;
+let modelMaxDim = 1.0;   // schaalt zoom-grenzen en clipping mee met het geladen model
+function applyCamera(){
+  const x = target.x + radius*Math.sin(phi)*Math.sin(theta);
+  const y = target.y + radius*Math.cos(phi);
+  const z = target.z + radius*Math.sin(phi)*Math.cos(theta);
+  camera.position.set(x,y,z);
+  camera.lookAt(target);
+}
+applyCamera();
+
+let slepen = false, pannen = false, lastX=0, lastY=0;
+let dragAs = null;   // actieve gizmo-as tijdens het slepen van een draaipunt: THREE.Vector3 | null
+let nettoGesleept = false;   // voorkomt dat het loslaten na een gizmo-sleep ook nog als gewone klik telt
+let vrijeStandActief = false;
+let grijpLink = null, grijpVlak = null, grijpLokaalPunt = null;   // Vrije stand: TCP-sleep
+
+renderer.domElement.addEventListener("pointerdown", e=>{
+  if(e.button === 0 && vrijeStandActief){
+    const rect = renderer.domElement.getBoundingClientRect();
+    const m = new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1);
+    const rc = new THREE.Raycaster(); rc.setFromCamera(m, camera);
+    const markers = ledematen.filter(l => l.tcpBol).map(l => l.tcpBol);
+    const hits = rc.intersectObjects(markers, false);
+    if(hits.length){
+      const link = ledematen.find(l => l.tcpBol === hits[0].object);
+      grijpLink = link;
+      grijpLokaalPunt = link.tcpLokaal.clone();
+      const camRichting = new THREE.Vector3(); camera.getWorldDirection(camRichting);
+      grijpVlak = new THREE.Plane().setFromNormalAndCoplanarPoint(camRichting, hits[0].point);
+      lastX = e.clientX; lastY = e.clientY;
+      return;
+    }
+  }
+  if(e.button === 0 && gizmoGroep){
+    const rect = renderer.domElement.getBoundingClientRect();
+    const m = new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1);
+    const rc = new THREE.Raycaster(); rc.setFromCamera(m, camera);
+    const hits = rc.intersectObjects(gizmoGroep.children.flatMap(g => g.children), false)
+      .filter(h => h.object.userData.isGizmoHit);
+    if(hits.length){
+      dragAs = hits[0].object.userData.as.clone();
+      lastX = e.clientX; lastY = e.clientY;
+      return;
+    }
+  }
+  if(e.button === 1){ pannen = true; } else if(e.button === 0){ slepen = true; }
+  lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener("pointerup", ()=>{
+  slepen=false; pannen=false;
+  if(dragAs) nettoGesleept = true;
+  dragAs=null;
+  if(grijpLink) nettoGesleept = true;
+  grijpLink = null; grijpVlak = null;
+});
+window.addEventListener("pointermove", e=>{
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  if(grijpLink){
+    const rect = renderer.domElement.getBoundingClientRect();
+    const m = new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1);
+    const rc = new THREE.Raycaster(); rc.setFromCamera(m, camera);
+    const doel = new THREE.Vector3();
+    if(rc.ray.intersectPlane(grijpVlak, doel)){
+      losOpIK(grijpLink, doel, grijpLokaalPunt, 8);
+      ketenTotBasis(grijpLink).filter(l=>l.joint).forEach(verversSliderUI);
+    }
+  } else if(dragAs && (pickModus === "tcp" ? pendingTcp && pendingTcp.punt : pendingLink && pendingLink.pivot)){
+    verschuifPivotLangsAs(e.clientX, e.clientY, dragAs);
+  } else if(slepen){
+    theta -= dx*0.006; phi = Math.max(0.05, Math.min(Math.PI-0.05, phi - dy*0.006));
+    applyCamera();
+  } else if(pannen){
+    const panS = radius*0.0016;
+    const right = new THREE.Vector3(Math.cos(theta),0,-Math.sin(theta));
+    const up = new THREE.Vector3(0,1,0);
+    target.addScaledVector(right, -dx*panS).addScaledVector(up, dy*panS);
+    applyCamera();
+  }
+});
+renderer.domElement.addEventListener("wheel", e=>{
+  e.preventDefault();
+  radius = Math.max(modelMaxDim*0.02, Math.min(modelMaxDim*30, radius * (1 + e.deltaY*0.001)));
+  applyCamera();
+}, {passive:false});
+renderer.domElement.addEventListener("contextmenu", e=>e.preventDefault());
+
+function resize(){
+  const w = viewport.clientWidth, h = viewport.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+resize();
+
+(function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+})();
+
+/* ============================================================
+   2. CAD-kernel laden (occt-import-js / WASM)
+   ============================================================ */
+let occt = null;
+const laadScherm = document.getElementById("laadScherm");
+const laadTekst = document.getElementById("laadTekst");
+laadScherm.classList.add("actief");
+occtimportjs({ locateFile: () => "occt-import-js.wasm" }).then(instance => {
+  occt = instance;
+  laadScherm.classList.remove("actief");
+  log("CAD-kernel geladen (OpenCascade/WASM) — klaar voor STEP/IGES.", "ok");
+}).catch(err => {
+  // Zonder dit blijft het laadscherm oneindig openstaan en blokkeert het
+  // (onzichtbaar) alle klikken op de pagina, inclusief "Bestand kiezen" —
+  // precies het symptoom "er gebeurt niets meer". Dus altijd weghalen,
+  // ook bij een mislukte laadpoging, en de fout duidelijk in het logboek
+  // zetten met de meest voorkomende oorzaak erbij.
+  laadScherm.classList.remove("actief");
+  log("Fout bij laden CAD-kernel: " + err.message, "err");
+  log("Komt dit door het openen van dit bestand met dubbelklikken (file://)? Open het dan via een lokale webserver — bijv. \"python -m http.server\" in deze map en daarna http://localhost:8000/twin-builder.html in de browser — anders blokkeert de browser het laden van de WASM-module.", "warn");
+});
+
+/* ============================================================
+   3. Bestand inladen + parsen
+   ============================================================ */
+const fileInput = document.getElementById("fileInput");
+const fileBtn = document.getElementById("fileBtn");
+const dropzone = document.getElementById("dropzone");
+
+fileBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => {
+  if(fileInput.files[0]) verwerkBestand(fileInput.files[0]);
+});
+["dragenter","dragover"].forEach(ev => dropzone.addEventListener(ev, e => {
+  e.preventDefault(); dropzone.classList.add("dragover");
+}));
+["dragleave","drop"].forEach(ev => dropzone.addEventListener(ev, e => {
+  e.preventDefault(); dropzone.classList.remove("dragover");
+}));
+dropzone.addEventListener("drop", e => {
+  if(e.dataTransfer.files[0]) verwerkBestand(e.dataTransfer.files[0]);
+});
+
+/* Vangnet voor de hele pagina: zonder dit voorkomt alleen #dropzone zelf de
+   standaard browseractie (het bestand als platte tekst openen/tonen) — mis
+   je die paar pixels (bijv. je laat het bestand boven het zijpaneel los),
+   dan grijpt de browser het drop-event alsnog zelf af. Dit vangt zo'n drop
+   altijd op, waar op de pagina dan ook, en negeert alleen de drop binnen
+   #dropzone zelf (die heeft hierboven al zijn eigen verwerking). */
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => {
+  e.preventDefault();
+  if(e.target.closest && e.target.closest("#dropzone")) return;
+  if(e.dataTransfer.files[0]) verwerkBestand(e.dataTransfer.files[0]);
+});
+
+let modelRoot = null;      // THREE.Group met de hele assembly
+let meshMeta = [];         // per mesh-index: {name, color, object3d}
+let selected = null;
+let huidigeBestandsnaam = "";
+let huidigeBoomWortel = null;   // laatst opgebouwde boomstructuur; standaardvormen sluiten hierop aan
+
+async function verwerkBestand(file){
+  if(!occt){ log("CAD-kernel is nog niet klaar, probeer zo nog eens.", "warn"); return; }
+  const ext = file.name.split(".").pop().toLowerCase();
+  if(!["step","stp","iges","igs"].includes(ext)){
+    log("Onbekend bestandstype: ." + ext + " — gebruik STEP of IGES.", "err");
+    return;
+  }
+  laadTekst.textContent = "\u201c" + file.name + "\u201d wordt gelezen …";
+  laadScherm.classList.add("actief");
+  log("Bestand geopend: <b>" + file.name + "</b> (" + (file.size/1024).toFixed(0) + " kB)");
+  await new Promise(r => setTimeout(r, 30));   // laat het laadscherm renderen vóór het zware werk
+
+  try{
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const t0 = performance.now();
+    const isIges = ext === "iges" || ext === "igs";
+    const parseParams = { linearUnit: "meter" };
+    const result = isIges ? occt.ReadIgesFile(buf, parseParams) : occt.ReadStepFile(buf, parseParams);
+    const duur = ((performance.now() - t0)/1000).toFixed(1);
+
+    if(!result.success){
+      log("Inlezen mislukt — is dit een geldig " + ext.toUpperCase() + "-bestand?", "err");
+      laadScherm.classList.remove("actief");
+      return;
+    }
+    log("Ingelezen in " + duur + " s — " + result.meshes.length + " onderdeel(deel)en gevonden.", "ok");
+    bouwScene(result, file.name);
+  } catch(err){
+    log("Onverwachte fout tijdens verwerken: " + err.message, "err");
+  } finally {
+    laadScherm.classList.remove("actief");
+  }
+}
+
+/* ============================================================
+   4. Van occt-resultaat naar Three.js-scene + boomstructuur
+   ============================================================ */
+function bouwGeometrie(meshData){
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(meshData.attributes.position.array, 3));
+  if(meshData.attributes.normal){
+    geo.setAttribute("normal", new THREE.Float32BufferAttribute(meshData.attributes.normal.array, 3));
+  } else {
+    geo.computeVertexNormals();
+  }
+  geo.setIndex(new THREE.BufferAttribute(new Uint32Array(meshData.index.array), 1));
+  return geo;
+}
+
+function volgendeKleur(i){
+  const palet = [0x5AB8D4, 0xE6A23C, 0x8FC97E, 0xD46A9E, 0x9C8CE0, 0xE0975A];
+  return palet[i % palet.length];
+}
+
+/* toont mm voor kleine onderdelen, m voor grote installaties — altijd leesbaar */
+function formatAfmeting(grootte){
+  const maxDim = Math.max(grootte.x, grootte.y, grootte.z);
+  if(maxDim < 1){
+    const mm = v => (v*1000).toFixed(1);
+    return mm(grootte.x) + " × " + mm(grootte.y) + " × " + mm(grootte.z) + " mm";
+  }
+  const m = v => v.toFixed(3);
+  return m(grootte.x) + " × " + m(grootte.y) + " × " + m(grootte.z) + " m";
+}
+
+/* ------------------------------------------------------------
+   Standaardvormen: eenvoudige basisvormen toevoegen, met of
+   zonder een al geladen CAD-bestand. Sluiten aan op dezelfde
+   boomstructuur/meshMeta, dus ook groepeerbaar tot ledematen.
+   ------------------------------------------------------------ */
+let primitiefTeller = 0;
+function voegPrimitiefToe(soort){
+  if(!modelRoot){
+    modelRoot = new THREE.Group();
+    scene.add(modelRoot);
+    huidigeBestandsnaam = "nieuwe-scene";
+    huidigeBoomWortel = { label: huidigeBestandsnaam, children: [] };
+    modelMaxDim = 0.3;
+    camera.near = modelMaxDim/1000; camera.far = modelMaxDim*50; camera.updateProjectionMatrix();
+    target = new THREE.Vector3(0,0,0); radius = modelMaxDim*1.8; theta = 0.9; phi = 1.15; applyCamera();
+    grid.visible = true; grid.scale.setScalar(modelMaxDim/2*4); grid.position.set(0,0,0);
+    dropzone.style.display = "none";
+    document.getElementById("btnFit").disabled = false;
+    document.getElementById("btnWire").disabled = false;
+    document.getElementById("btnDoorzichtig").disabled = false;
+    document.getElementById("ledematenSection").style.display = "";
+    document.getElementById("rigSection").style.display = "";
+    document.getElementById("sessieSection").style.display = "";
+    document.getElementById("metaSection").style.display = "";
+    setStatus("MODEL GELADEN", "var(--ok)");
+  }
+
+  const idx = meshMeta.length;
+  const g = modelMaxDim * 0.35;
+  let geo, hoogte;
+  if(soort === "blok"){ geo = new THREE.BoxGeometry(g, g, g); hoogte = g; }
+  else if(soort === "cilinder"){ geo = new THREE.CylinderGeometry(g/2, g/2, g, 28); hoogte = g; }
+  else if(soort === "bol"){ geo = new THREE.SphereGeometry(g/2, 26, 18); hoogte = g/2; }
+  else if(soort === "kegel"){ geo = new THREE.ConeGeometry(g/2, g, 28); hoogte = g; }
+  else { geo = new THREE.BoxGeometry(g*3, g*0.12, g*3); hoogte = g*0.12; }   // plaat
+
+  primitiefTeller++;
+  const naam = soort.charAt(0).toUpperCase() + soort.slice(1) + " " + primitiefTeller;
+  const mat = new THREE.MeshStandardMaterial({color: volgendeKleur(idx), roughness:0.5, metalness:0.2});
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = naam;
+  mesh.userData.meshIndex = idx;
+  const box = modelRoot.children.length ? new THREE.Box3().setFromObject(modelRoot) : null;
+  const naastPositie = box ? box.max.x + g*0.8 : 0;
+  mesh.position.set(naastPositie, hoogte/2, 0);
+  modelRoot.add(mesh);
+  meshMeta[idx] = { name: naam, object3d: mesh, material: mat, primitief: soort, basisGrootte: g };
+
+  huidigeBoomWortel.children.push({
+    label: naam, children: [], object3d: mesh, isLeafMesh: true,
+    kleurHex: "#" + mat.color.getHexString(), meshIndex: idx,
+  });
+  bouwBoom(huidigeBoomWortel);
+  log("Standaardvorm toegevoegd: <b>" + naam + "</b>.", "ok");
+}
+document.querySelectorAll("[data-vorm]").forEach(b => b.addEventListener("click", () => voegPrimitiefToe(b.dataset.vorm)));
+
+function bouwScene(result, bestandsnaam){
+  if(modelRoot) scene.remove(modelRoot);
+  modelRoot = new THREE.Group();
+  meshMeta = [];
+  selected = null;
+  huidigeBestandsnaam = bestandsnaam;
+
+  // eerder opgebouwde ledematen/joints horen bij het vorige model — altijd resetten
+  ledematen = []; volgendLinkNr = 1; geselecteerdLedemaat = null;
+  pendingLink = null; pickModus = null;
+  if(pivotMarker){ scene.remove(pivotMarker); pivotMarker = null; } verwijderGizmo();
+  if(asMarker){ scene.remove(asMarker); asMarker = null; }
+  draadmodel = false; doorzichtig = false;
+  programma = []; programmaToken++; programmaLoopt = false;
+  vrijeStandActief = false; grijpLink = null; grijpVlak = null;
+  const vsCb = document.getElementById("vrijeStandCb"); if(vsCb) vsCb.checked = false;
+  const wireBtn = document.getElementById("btnWire"), transBtn = document.getElementById("btnDoorzichtig");
+  if(wireBtn) wireBtn.style.color = ""; if(transBtn) transBtn.style.color = "";
+  ["ledematenSection","jointWizard","kinematischeBoomSection","simulatieSection","programmaSection"].forEach(id => {
+    const el = document.getElementById(id); if(el) el.style.display = "none";
+  });
+
+  const materialen = new Map();
+  function materiaalVoor(kleurRGB, idx){
+    const key = kleurRGB ? kleurRGB.join(",") : "default" + (idx % 6);
+    if(!materialen.has(key)){
+      const hex = kleurRGB
+        ? new THREE.Color(kleurRGB[0], kleurRGB[1], kleurRGB[2]).getHex()
+        : volgendeKleur(idx);
+      materialen.set(key, new THREE.MeshStandardMaterial({color:hex, roughness:0.5, metalness:0.25}));
+    }
+    return materialen.get(key);
+  }
+
+  /* boomdata parallel aan de 3D-objecten opbouwen */
+  let teller = 0;
+  function verwerkNode(node, three_parent, boomParent, diepte){
+    const label = node.name && node.name.trim() ? node.name.trim() : (diepte === 0 ? bestandsnaam : "(naamloos)");
+    const groep = new THREE.Group();
+    groep.name = label;
+    three_parent.add(groep);
+
+    const boomNode = { label, children: [], object3d: groep, isLeafMesh: false, kleurHex: null };
+    boomParent.children.push(boomNode);
+
+    const naamTeller = new Map();   // ontdubbelt gelijknamige onderdelen binnen dezelfde knoop (bv. twee keer "nut")
+    (node.meshes || []).forEach(meshIdx => {
+      const m = result.meshes[meshIdx];
+      const geo = bouwGeometrie(m);
+      const mat = materiaalVoor(m.color, teller++);
+      const basisNaam = (m.name && m.name.trim()) ? m.name.trim() : (label + "-onderdeel");
+      const n = (naamTeller.get(basisNaam) || 0) + 1;
+      naamTeller.set(basisNaam, n);
+      const weergaveNaam = n > 1 ? basisNaam + " (" + n + ")" : basisNaam;
+
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.name = weergaveNaam;
+      mesh.userData.meshIndex = meshIdx;
+      groep.add(mesh);
+      meshMeta[meshIdx] = { name: weergaveNaam, object3d: mesh, material: mat };
+
+      // elke mesh krijgt altijd een eigen boomvermelding, ook als de knoop er meerdere bevat
+      boomNode.children.push({
+        label: weergaveNaam, children: [], object3d: mesh, isLeafMesh: true,
+        kleurHex: "#" + mat.color.getHexString(), meshIndex: meshIdx
+      });
+    });
+
+    (node.children || []).forEach(child => verwerkNode(child, groep, boomNode, diepte + 1));
+  }
+
+  const boomWortel = { label: bestandsnaam, children: [] };
+  verwerkNode(result.root, modelRoot, boomWortel, 0);
+  scene.add(modelRoot);
+  huidigeBoomWortel = boomWortel.children[0] || boomWortel;
+
+  /* camera automatisch op het model richten — near/far schalen mee, zodat
+     dit werkt van kleine onderdelen (mm) tot grote installaties (meters) */
+  const box = new THREE.Box3().setFromObject(modelRoot);
+  const grootte = box.getSize(new THREE.Vector3());
+  const midden = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(grootte.x, grootte.y, grootte.z) || 1;
+  target = midden;
+  radius = maxDim * 1.8;
+  theta = 0.9; phi = 1.15;
+  modelMaxDim = maxDim;
+  camera.near = Math.max(maxDim / 1000, 0.0001);
+  camera.far = Math.max(maxDim * 50, 100);
+  camera.updateProjectionMatrix();
+  applyCamera();
+  grid.visible = true;
+  grid.scale.setScalar(maxDim / 2 * 4);
+  grid.position.set(midden.x, box.min.y, midden.z);
+
+  dropzone.style.display = "none";
+  document.getElementById("btnFit").disabled = false;
+  document.getElementById("btnWire").disabled = false;
+  document.getElementById("btnDoorzichtig").disabled = false;
+  document.getElementById("ledematenSection").style.display = "";
+  document.getElementById("rigSection").style.display = "";
+  document.getElementById("sessieSection").style.display = "";
+  setStatus("MODEL GELADEN", "var(--ok)");
+
+  /* metadata */
+  document.getElementById("metaSection").style.display = "";
+  document.getElementById("modelMeta").innerHTML =
+    "<b>" + bestandsnaam + "</b><br>" +
+    result.meshes.length + " onderdelen<br>" +
+    "afmeting ca. " + formatAfmeting(grootte);
+
+  bouwBoom(huidigeBoomWortel);
+  log("Assembly opgebouwd — klik een onderdeel aan om te selecteren.");
+}
+
+/* ============================================================
+   5. Assembly-boom in de zijbalk
+   ============================================================ */
+function verwijderOnderdeel(meshIndex){
+  const meta = meshMeta[meshIndex];
+  if(!meta) return;
+  if(meta.linkId){ log("Dit onderdeel zit al in een ledemaat — verwijder eerst het ledemaat.", "warn"); return; }
+  if(!confirm("Onderdeel \"" + meta.name + "\" verwijderen uit de scène?")) return;
+
+  modelRoot.remove(meta.object3d);
+  meta.object3d.geometry.dispose();
+  if(meta.material && meta.material.dispose) meta.material.dispose();
+  meshMeta[meshIndex] = null;
+  if(selected && selected.meshes && selected.meshes.includes(meta.object3d)){ selected = null; highlightMeshes([]); toonSelectieInfo(null); }
+
+  (function verwijderUitBoom(node){
+    node.children = node.children.filter(c => c.meshIndex !== meshIndex);
+    node.children.forEach(verwijderUitBoom);
+  })(huidigeBoomWortel);
+  bouwBoom(huidigeBoomWortel);
+  log("Onderdeel \"" + meta.name + "\" verwijderd.", "ok");
+}
+
+function bouwBoom(root){
+  const container = document.getElementById("tree");
+  container.innerHTML = "";
+  container.appendChild(renderNode(root, 0));
+}
+
+function telAfstammelingen(n){
+  if(n.isLeafMesh) return 1;
+  return n.children.reduce((s,c) => s + telAfstammelingen(c), 0);
+}
+
+function renderNode(n, diepte){
+  const wrap = document.createElement("div");
+  wrap.className = "node" + (diepte < 3 ? " open" : "");
+
+  const row = document.createElement("div");
+  row.className = "node-row" + (n.isLeafMesh || n.children.length === 0 ? " leaf" : "");
+  row.style.paddingLeft = (6 + diepte*2) + "px";
+
+  const chev = document.createElement("span");
+  chev.className = "chev"; chev.textContent = "▸";
+  row.appendChild(chev);
+
+  if(n.isLeafMesh){
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.className = "meshcb";
+    cb.dataset.meshIndex = n.meshIndex;
+    cb.style.margin = "0 2px 0 0";
+    cb.addEventListener("click", e => e.stopPropagation());
+    cb.addEventListener("change", werkGroepeerKnopBij);
+    row.appendChild(cb);
+    if(meshMeta[n.meshIndex] && meshMeta[n.meshIndex].linkId) cb.disabled = true;
+
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = n.kleurHex || "#5AB8D4";
+    row.appendChild(sw);
+    row.dataset.meshIndex = n.meshIndex;
+  }
+
+  const naam = document.createElement("span");
+  naam.className = "name"; naam.textContent = n.label;
+  row.appendChild(naam);
+
+  if(!n.isLeafMesh && n.children.length){
+    const cnt = document.createElement("span");
+    cnt.className = "count"; cnt.textContent = telAfstammelingen(n);
+    row.appendChild(cnt);
+  }
+
+  if(n.isLeafMesh && !(meshMeta[n.meshIndex] && meshMeta[n.meshIndex].linkId)){
+    const delBtn = document.createElement("button");
+    delBtn.className = "mini-btn"; delBtn.title = "Onderdeel verwijderen";
+    delBtn.textContent = "×";
+    delBtn.addEventListener("click", (e) => { e.stopPropagation(); verwijderOnderdeel(n.meshIndex); });
+    row.appendChild(delBtn);
+  }
+
+  row.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if(!n.isLeafMesh && n.children.length){ wrap.classList.toggle("open"); }
+    selecteer(n, row);
+  });
+
+  wrap.appendChild(row);
+
+  if(n.children && n.children.length){
+    const kids = document.createElement("div");
+    kids.className = "node-children";
+    n.children.forEach(c => kids.appendChild(renderNode(c, diepte+1)));
+    wrap.appendChild(kids);
+  }
+  return wrap;
+}
+
+/* ============================================================
+   6. Selectie: highlight in 3D + info in zijbalk, klikbaar vanuit
+      zowel de boom als de 3D-view (raycasting)
+   ============================================================ */
+const emissiefGeselecteerd = new THREE.Color(0xE6007E);
+const EMISSIE_INTENSITEIT = 0.75;
+let gehighlight = [];
+
+function highlightMeshes(meshes){
+  gehighlight.forEach(m => { if(m.material){ m.material.emissive.setHex(0x000000); m.material.emissiveIntensity = 1; }});
+  meshes.forEach(m => {
+    if(m.material){
+      m.material.emissive = m.material.emissive || new THREE.Color();
+      m.material.emissive.copy(emissiefGeselecteerd);
+      m.material.emissiveIntensity = EMISSIE_INTENSITEIT;
+    }
+  });
+  gehighlight = meshes.slice();
+}
+
+function selecteer(boomNode, rowEl){
+  document.querySelectorAll(".node-row.selected").forEach(el => el.classList.remove("selected"));
+
+  if(!boomNode){ selected = null; highlightMeshes([]); toonSelectieInfo(null); return; }
+
+  if(rowEl) rowEl.classList.add("selected");
+
+  // selecteer alle meshes onder deze node (ook als het een sub-assembly is)
+  const meshes = [];
+  (function verzamel(n){
+    if(n.isLeafMesh) meshes.push(n.object3d);
+    else n.children.forEach(verzamel);
+  })(boomNode);
+
+  highlightMeshes(meshes);
+  selected = { node: boomNode, meshes };
+  toonSelectieInfo(boomNode, meshes);
+}
+
+function toonSelectieInfo(node, meshes){
+  const el = document.getElementById("selInfo");
+  if(!node){ el.innerHTML = '<span class="empty">Klik een onderdeel aan in de boom of in 3D.</span>'; return; }
+  const totaalDriehoeken = (meshes||[]).reduce((s,m)=> s + (m.geometry.index ? m.geometry.index.count/3 : 0), 0);
+  let html =
+    "<b>" + node.label + "</b><br>" +
+    (meshes.length > 1 ? meshes.length + " subonderdelen<br>" : "") +
+    totaalDriehoeken.toFixed(0) + " driehoeken (weergave)";
+
+  const meta = (meshes.length === 1) ? meshMeta.find(m => m && m.object3d === meshes[0]) : null;
+  const isPrimitief = meta && meta.primitief;
+  const eenheid = modelMaxDim < 1 ? "mm" : "m";
+  const naarWeergave = v => modelMaxDim < 1 ? +(v*1000).toFixed(2) : +v.toFixed(4);
+  const vanWeergave = v => modelMaxDim < 1 ? (+v/1000) : +v;
+
+  if(isPrimitief){
+    const pos = meta.object3d.position;
+    html += `
+      <div class="wizard-row" style="margin-top:8px">
+        <label>Grootte <input type="number" id="selGrootte" class="num-small" step="5" min="1" value="${(meta.object3d.scale.x*100).toFixed(0)}"></label>%
+      </div>
+      <div class="wizard-row">
+        <label>X <input type="number" id="selPosX" class="num-small" step="1" value="${naarWeergave(pos.x)}"></label>
+        <label>Y <input type="number" id="selPosY" class="num-small" step="1" value="${naarWeergave(pos.y)}"></label>
+        <label>Z <input type="number" id="selPosZ" class="num-small" step="1" value="${naarWeergave(pos.z)}"></label>
+        <span class="note">${eenheid}</span>
+      </div>`;
+  }
+  el.innerHTML = html;
+  if(!isPrimitief) return;
+
+  document.getElementById("selGrootte").addEventListener("input", (e) => {
+    const factor = Math.max(1, +e.target.value || 100) / 100;
+    meta.object3d.scale.setScalar(factor);
+  });
+  ["X","Y","Z"].forEach(as => {
+    document.getElementById("selPos"+as).addEventListener("input", (e) => {
+      meta.object3d.position[as.toLowerCase()] = vanWeergave(e.target.value);
+    });
+  });
+}
+
+const raycaster = new THREE.Raycaster();
+const muis = new THREE.Vector2();
+renderer.domElement.addEventListener("click", (e) => {
+  if(nettoGesleept){ nettoGesleept = false; return; }
+  if(!modelRoot) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  muis.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  muis.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(muis, camera);
+  const hits = raycaster.intersectObject(modelRoot, true);
+
+  if(pickModus){
+    if(!hits.length){ log("Geen oppervlak geraakt — klik direct op het model.", "warn"); return; }
+    verwerkPickKlik(hits[0].point);
+    return;
+  }
+
+  if(hits.length){
+    const idx = hits[0].object.userData.meshIndex;
+    const rij = document.querySelector('.node-row[data-mesh-index="' + idx + '"]');
+    if(rij){
+      rij.click();
+      rij.scrollIntoView({block:"nearest"});
+      let p = rij.closest(".node-children");
+      while(p){ p.parentElement.classList.add("open"); p = p.parentElement.parentElement.closest(".node-children"); }
+    }
+  }
+});
+
+/* ============================================================
+   7. Weergave-knoppen
+   ============================================================ */
+document.getElementById("btnFit").addEventListener("click", () => {
+  if(!modelRoot) return;
+  const box = new THREE.Box3().setFromObject(modelRoot);
+  const grootte = box.getSize(new THREE.Vector3());
+  target = box.getCenter(new THREE.Vector3());
+  modelMaxDim = Math.max(grootte.x, grootte.y, grootte.z) || 1;
+  radius = modelMaxDim * 1.8;
+  camera.near = Math.max(modelMaxDim / 1000, 0.0001);
+  camera.far = Math.max(modelMaxDim * 50, 100);
+  camera.updateProjectionMatrix();
+  applyCamera();
+});
+let draadmodel = false;
+document.getElementById("btnWire").addEventListener("click", (e) => {
+  draadmodel = !draadmodel;
+  meshMeta.forEach(m => { if(m && m.material) m.material.wireframe = draadmodel; });
+  e.target.style.color = draadmodel ? "var(--ur)" : "";
+});
+
+let doorzichtig = false;
+document.getElementById("btnDoorzichtig").addEventListener("click", (e) => {
+  doorzichtig = !doorzichtig;
+  meshMeta.forEach(m => {
+    if(!m || !m.material) return;
+    m.material.transparent = doorzichtig;
+    m.material.opacity = doorzichtig ? 0.3 : 1;
+    m.material.depthWrite = !doorzichtig;
+  });
+  e.target.style.color = doorzichtig ? "var(--ur)" : "";
+});
+
+/* ============================================================
+   Schermwissel: Bewerken ↔ Simulatie
+   ============================================================ */
+let huidigeTab = "bewerken";
+function wisselTab(naam){
+  huidigeTab = naam;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === naam));
+  document.querySelectorAll(".tab-bewerken").forEach(el => el.classList.toggle("tab-hidden", naam !== "bewerken"));
+  document.querySelectorAll(".tab-simulatie").forEach(el => el.classList.toggle("tab-hidden", naam !== "simulatie"));
+  document.querySelector("aside").classList.toggle("modus-simulatie", naam === "simulatie");
+  document.getElementById("main").classList.toggle("modus-simulatie", naam === "simulatie");
+}
+document.getElementById("tabBewerken").addEventListener("click", () => wisselTab("bewerken"));
+document.getElementById("tabSimulatie").addEventListener("click", () => wisselTab("simulatie"));
+
+document.getElementById("btnSimStepKiezen").addEventListener("click", () => document.getElementById("simStepInput").click());
+document.getElementById("simStepInput").addEventListener("change", () => {
+  const f = document.getElementById("simStepInput").files[0];
+  if(f) verwerkBestand(f);
+  document.getElementById("simStepInput").value = "";
+});
+document.getElementById("btnSimRigKiezen").addEventListener("click", () => document.getElementById("rigInput").click());
+document.getElementById("vrijeStandCb").addEventListener("change", (e) => {
+  vrijeStandActief = e.target.checked;
+  if(!vrijeStandActief){ grijpLink = null; grijpVlak = null; }
+});
+
+log("Digital Twin Builder gestart.");
+
+/* ============================================================
+   8. Ledematen: onderdelen groeperen tot een star geheel
+   ============================================================ */
+let ledematen = [];             // {id, naam, meshIndices, ouderId, kleur, groep, meshes, joint}
+let volgendLinkNr = 1;
+let geselecteerdLedemaat = null;
+const LINK_KLEUREN = ["#E6007E","#5AB8D4","#8FC97E","#E6A23C","#9C8CE0","#D46A9E"];
+
+function alleAangevinkteMeshIndices(){
+  return [...document.querySelectorAll(".meshcb:checked")].map(cb => +cb.dataset.meshIndex);
+}
+function werkGroepeerKnopBij(){
+  const n = alleAangevinkteMeshIndices().length;
+  document.getElementById("aantalAangevinkt").textContent = n;
+  document.getElementById("btnGroepeer").disabled = n === 0 || !!pendingLink;
+  const btnDiff = document.getElementById("btnStepDiff");
+  if(btnDiff) btnDiff.disabled = n !== 1 || !!pendingLink;
+}
+
+document.getElementById("btnGroepeer").addEventListener("click", () => {
+  const meshIndices = alleAangevinkteMeshIndices();
+  if(!meshIndices.length) return;
+  startNieuwLedemaat(meshIndices);
+});
+
+function startNieuwLedemaat(meshIndices){
+  pendingLink = {
+    meshIndices, naam: "", ouderId: null,
+    fase: ledematen.length === 0 ? "naam-basis" : "naam",
+    pivot: null, as: null, type: "revolute", min: -180, max: 180,
+  };
+  document.getElementById("jointWizard").style.display = "";
+  toonWizardStap();
+}
+
+/* ------------------------------------------------------------
+   Schuifgewricht berekenen uit twee STEP-bestanden van dezelfde
+   assembly in twee standen (bijv. een cilinder in- en uitgeschoven).
+   Vergelijkt de positie van ÉÉN aangevinkt onderdeel (het bewegende
+   deel) tussen het nu geladen model (= stand "0", de basis/"in") en
+   een 2e geüpload STEP-bestand (= de andere stand, "uit"): het
+   centrum van de vorm in beide bestanden geeft samen de as en de
+   slaglengte van het schuifgewricht. Rotaties (scharnieren) worden
+   hiermee bewust niet herkend — dat blijft handmatig via de gewone
+   wizard.
+   ------------------------------------------------------------ */
+let stepDiffMeshIndex = null;
+
+document.getElementById("btnStepDiff").addEventListener("click", () => {
+  if(pendingLink){ log("Rond eerst de huidige wizard af of klik Annuleren.", "warn"); return; }
+  const idx = alleAangevinkteMeshIndices();
+  if(idx.length !== 1){ log("Vink precies één onderdeel aan — het onderdeel dat beweegt (bijv. de cilinderstang).", "warn"); return; }
+  stepDiffMeshIndex = idx[0];
+  document.getElementById("stepDiffInput").click();
+});
+
+document.getElementById("stepDiffInput").addEventListener("change", async () => {
+  const file = document.getElementById("stepDiffInput").files[0];
+  document.getElementById("stepDiffInput").value = "";
+  if(!file || stepDiffMeshIndex === null) return;
+  const meshIdx = stepDiffMeshIndex;
+  stepDiffMeshIndex = null;
+  await verwerkStepDiff(file, meshIdx);
+});
+
+function centroidVanPositions(posArray){
+  const n = posArray.length / 3;
+  let cx = 0, cy = 0, cz = 0;
+  for(let k = 0; k < n; k++){ cx += posArray[k*3]; cy += posArray[k*3+1]; cz += posArray[k*3+2]; }
+  return new THREE.Vector3(cx/n, cy/n, cz/n);
+}
+
+/* Simpele terugvalkeuze als de onderdeelnamen niet exact overeenkomen
+   tussen de twee STEP-bestanden (bijv. andere SolidWorks-configuratienaam).
+   Geen extra wizard-scherm nodig voor dit uitzonderingsgeval — een
+   genummerde lijst via prompt() volstaat. */
+function kiesStepDiffOnderdeelHandmatig(meshes, gezochteNaam){
+  const lijst = meshes.map((m, i) => (i+1) + ". " + ((m.name && m.name.trim()) ? m.name.trim() : "(naamloos onderdeel " + i + ")")).join("\n");
+  const antwoord = window.prompt(
+    "Geen onderdeel met de naam “" + gezochteNaam + "” gevonden in het 2e bestand.\n" +
+    "Typ het nummer van het onderdeel dat hiermee overeenkomt:\n\n" + lijst
+  );
+  const n = parseInt(antwoord, 10);
+  if(!antwoord || isNaN(n) || n < 1 || n > meshes.length) return null;
+  return meshes[n-1];
+}
+
+async function verwerkStepDiff(file, meshIdx){
+  if(!occt){ log("CAD-kernel is nog niet klaar, probeer zo nog eens.", "warn"); return; }
+  const meta = meshMeta[meshIdx];
+  if(!meta){ log("Kon het geselecteerde onderdeel niet meer vinden.", "err"); return; }
+
+  laadTekst.textContent = "“" + file.name + "” wordt vergeleken met “" + meta.name + "” …";
+  laadScherm.classList.add("actief");
+  await new Promise(r => setTimeout(r, 30));
+
+  try{
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const ext = file.name.split(".").pop().toLowerCase();
+    if(!["step","stp","iges","igs"].includes(ext)){
+      log("Onbekend bestandstype: ." + ext + " — gebruik STEP of IGES.", "err");
+      return;
+    }
+    const isIges = ext === "iges" || ext === "igs";
+    const result = isIges ? occt.ReadIgesFile(buf, {linearUnit:"meter"}) : occt.ReadStepFile(buf, {linearUnit:"meter"});
+    if(!result.success){
+      log("Inlezen van “" + file.name + "” mislukt — is dit een geldig " + ext.toUpperCase() + "-bestand?", "err");
+      return;
+    }
+
+    const basisNaam = meta.name.replace(/\s*\(\d+\)$/, "").trim().toLowerCase();
+    const kandidaten = result.meshes.filter(m => ((m.name||"").trim().toLowerCase()) === basisNaam);
+    let match = kandidaten[0];
+    if(kandidaten.length > 1){
+      log("Let op: " + kandidaten.length + " onderdelen in “" + file.name + "” heten “" + meta.name + "” — de eerste is gebruikt. Controleer het resultaat in stap 3 goed voordat je bevestigt.", "warn");
+    }
+    if(!match){
+      match = kiesStepDiffOnderdeelHandmatig(result.meshes, meta.name);
+      if(!match){ log("Vergelijking geannuleerd — geen overeenkomend onderdeel gekozen.", "warn"); return; }
+    }
+
+    // Het model staat nog los onder modelRoot (geen transform toegepast vóór
+    // groepering), dus de lokale vertexposities van het geladen onderdeel
+    // zijn gelijk aan de wereldpositie — net als de rauwe STEP-coördinaten
+    // van het 2e bestand.
+    const centroidHuidig = centroidVanPositions(meta.object3d.geometry.attributes.position.array);
+    const centroidNieuw = centroidVanPositions(match.attributes.position.array);
+    const verschil = new THREE.Vector3().subVectors(centroidNieuw, centroidHuidig);
+    const afstandMm = verschil.length() * 1000;
+
+    if(afstandMm < 0.05){
+      log("“" + meta.name + "” staat in beide bestanden vrijwel op dezelfde plek (" + afstandMm.toFixed(3) + " mm verschil) — geen zinvolle slag gevonden. Is dit echt het bewegende onderdeel?", "warn");
+      return;
+    }
+    const as = verschil.clone().normalize();
+    const max = Math.round(afstandMm * 100) / 100;
+
+    pendingLink = {
+      meshIndices: [meshIdx], naam: meta.name, ouderId: null,
+      fase: ledematen.length === 0 ? "type-limiet" : "naam",
+      pivot: centroidHuidig, as,
+      type: "prismatic", min: 0, max,
+    };
+    document.querySelectorAll(".meshcb:checked").forEach(cb => { if(+cb.dataset.meshIndex !== meshIdx) cb.checked = false; });
+    document.getElementById("jointWizard").style.display = "";
+    toonWizardStap();
+    log("Schuifgewricht berekend uit de twee STEP-bestanden: <b>" + max + " mm</b> langs as (" +
+        as.x.toFixed(2) + ", " + as.y.toFixed(2) + ", " + as.z.toFixed(2) +
+        "). Het nu geladen model is stand 0 (“in”), “" + file.name + "” is stand " + max + " mm (“uit”). " +
+        "Controleer dit in de wizard en bevestig — er wordt pas iets aangemaakt na bevestigen.", "ok");
+  } catch(err){
+    log("Onverwachte fout bij het vergelijken: " + err.message, "err");
+  } finally {
+    laadScherm.classList.remove("actief");
+  }
+}
+
+function bewerkJoint(linkId){
+  if(pendingLink){ log("Rond eerst de huidige wizard af of klik Annuleren.", "warn"); return; }
+  const link = ledematen.find(l => l.id === linkId);
+  if(!link || !link.joint) return;
+
+  link.joint.waarde = 0; pasJointToe(link);
+  verversSliderUI(link);
+
+  const ouderLink = ledematen.find(l => l.id === link.ouderId);
+  const ouderGroep = ouderLink ? ouderLink.groep : modelRoot;
+  ouderGroep.updateMatrixWorld(true);
+  const huidigePivotWereld = ouderGroep.localToWorld(link.groep.position.clone());
+  const ouderWereldQuat = new THREE.Quaternion();
+  ouderGroep.getWorldQuaternion(ouderWereldQuat);
+  const huidigeAsWereld = link.joint.lokaalAs.clone().applyQuaternion(ouderWereldQuat).normalize();
+
+  pendingLink = {
+    naam: link.naam, meshIndices: link.meshIndices, ouderId: link.ouderId,
+    fase: "pivot", pivot: huidigePivotWereld, as: huidigeAsWereld,
+    type: link.joint.type, min: link.joint.min, max: link.joint.max,
+    bewerktLinkId: linkId,
+  };
+  pickModus = "pivot";
+  plaatsPivotMarker(pendingLink.pivot);
+  document.getElementById("jointWizard").style.display = "";
+  toonWizardStap();
+  log("Draaipunt van <b>" + link.naam + "</b> bewerken — sta op nulstand gezet.", "warn");
+}
+
+/* Verplaatst het draaipunt van een BESTAAND gewricht, met behoud van de
+   huidige wereldpositie van alles wat eronder hangt (meshes én eventuele
+   onderliggende gewrichten) — alleen het aangrijppunt zelf verandert.   */
+function bijwerkenJoint(p, jointData){
+  const link = ledematen.find(l => l.id === p.bewerktLinkId);
+  const ouderLink = ledematen.find(l => l.id === link.ouderId);
+  const ouderGroep = ouderLink ? ouderLink.groep : modelRoot;
+  ouderGroep.updateMatrixWorld(true);
+
+  const kinderen = [...link.groep.children];
+  kinderen.forEach(kind => scene.attach(kind));
+
+  const pivotWereld = new THREE.Vector3().fromArray(jointData.pivotWereld);
+  link.groep.position.copy(ouderGroep.worldToLocal(pivotWereld.clone()));
+  link.groep.quaternion.identity();
+  link.groep.updateMatrixWorld(true);
+  const ouderWereldQuat = new THREE.Quaternion();
+  ouderGroep.getWorldQuaternion(ouderWereldQuat);
+  const asWereld = new THREE.Vector3().fromArray(jointData.asWereld);
+  const lokaalAs = asWereld.clone().applyQuaternion(ouderWereldQuat.clone().invert()).normalize();
+
+  kinderen.forEach(kind => link.groep.attach(kind));
+
+  link.joint.type = jointData.type;
+  link.joint.min = jointData.min;
+  link.joint.max = jointData.max;
+  link.joint.waarde = 0;
+  link.joint.pivotWereld = jointData.pivotWereld;
+  link.joint.asWereld = jointData.asWereld;
+  link.joint.lokaalAs = lokaalAs;
+  link.joint.pivotBasisPositie = link.groep.position.clone();
+
+  pendingLink = null; pickModus = null;
+  if(pivotMarker){ scene.remove(pivotMarker); pivotMarker = null; }
+  if(asMarker){ scene.remove(asMarker); asMarker = null; }
+  verwijderGizmo();
+  toonWizardStap();
+  renderLedematenLijst(); renderKinBoom(); renderSimSliders();
+  log("Draaipunt van <b>" + link.naam + "</b> bijgewerkt.", "ok");
+}
+
+/* ============================================================
+   9. Draaipunt-wizard: naam/ouder kiezen → punt → as → type+limiet
+   ============================================================ */
+let pendingLink = null;
+let pickModus = null;               // null | "pivot" | "as"
+let pivotMarker = null, asMarker = null;
+
+function toonWizardStap(){
+  const el = document.getElementById("jointWizardBody");
+  if(!pendingLink){ el.innerHTML = ""; document.getElementById("jointWizard").style.display = "none"; return; }
+  const p = pendingLink;
+
+  if(p.fase === "naam-basis" || p.fase === "naam"){
+    const ouderOpties = ledematen.map(l => `<option value="${l.id}">${l.naam}</option>`).join("");
+    el.innerHTML = `
+      <div class="wizard-step">
+        <b>${p.fase === "naam-basis" ? "Eerste ledemaat (basis)" : "Nieuw ledemaat"}</b><br>
+        ${p.meshIndices.length} onderdeel(en) geselecteerd.
+        <div class="wizard-row">
+          <input type="text" id="wLinkNaam" placeholder="Naam, bijv. Schouder" style="flex:1" value="${p.naam ? p.naam.replace(/"/g,"&quot;") : ""}">
+        </div>
+        ${p.fase === "naam" ? `<div class="wizard-row">
+          <label>Bovenliggend: <select id="wLinkOuder">${ouderOpties}</select></label>
+        </div>` : `<div class="wizard-row"><span class="note">Dit wordt het vaste startpunt — geen draaipunt nodig.</span></div>`}
+        ${(p.pivot && p.as) ? `<div class="wizard-row"><span class="note">Draaipunt en as zijn al berekend uit het 2e STEP-bestand — stappen 1 en 2 worden overgeslagen.</span></div>` : ""}
+        <div class="wizard-row">
+          <button class="btn" id="wAnnuleer">Annuleren</button>
+          <button class="btn primary" id="wVolgende">${p.fase === "naam-basis" ? "Ledemaat aanmaken" : (p.pivot && p.as ? "Volgende — type en grenzen" : "Volgende — draaipunt aanwijzen")}</button>
+        </div>
+      </div>`;
+    document.getElementById("wAnnuleer").addEventListener("click", annuleerWizard);
+    document.getElementById("wVolgende").addEventListener("click", () => {
+      const naam = document.getElementById("wLinkNaam").value.trim() || ("Ledemaat " + volgendLinkNr);
+      p.naam = naam;
+      if(p.fase === "naam-basis"){
+        finaliseerLedemaat(p, null);
+      } else {
+        p.ouderId = document.getElementById("wLinkOuder").value;
+        if(p.pivot && p.as){
+          // draaipunt/as al bekend (bijv. berekend uit een 2e STEP-bestand) — stappen 1 en 2 overslaan
+          p.fase = "type-limiet"; pickModus = null;
+        } else {
+          p.fase = "pivot";
+          pickModus = "pivot";
+        }
+        toonWizardStap();
+      }
+    });
+    return;
+  }
+
+  if(p.fase === "pivot"){
+    const heeftPunt = !!p.pivot;
+    const stapGrootte = (modelMaxDim/500).toPrecision(3);
+    el.innerHTML = `
+      <div class="wizard-step">
+        <b>Stap 1 — draaipunt</b><br>
+        Klik op het model op (ongeveer) de plek waar "${p.naam}" moet draaien of schuiven.
+        Zit het echte punt verborgen in het model? Klik zo dichtbij mogelijk en stel daarna bij
+        met de velden hieronder — zet ook gerust <b>Doorzichtig</b> aan (linksonder) om mee te kijken.
+        ${heeftPunt ? `
+        <div class="wizard-row">
+          <label>X <input type="number" id="wPivotX" class="num-small" step="${stapGrootte}" value="${p.pivot.x.toFixed(4)}"></label>
+          <label>Y <input type="number" id="wPivotY" class="num-small" step="${stapGrootte}" value="${p.pivot.y.toFixed(4)}"></label>
+          <label>Z <input type="number" id="wPivotZ" class="num-small" step="${stapGrootte}" value="${p.pivot.z.toFixed(4)}"></label>
+        </div>` : ""}
+        <div class="wizard-row">
+          <button class="btn" id="wAnnuleer">Annuleren</button>
+          ${heeftPunt ? '<button class="btn primary" id="wPivotVolgende">Volgende — as aanwijzen</button>' : ""}
+        </div>
+      </div>`;
+    document.getElementById("wAnnuleer").addEventListener("click", annuleerWizard);
+    if(heeftPunt){
+      ["X","Y","Z"].forEach(as => {
+        document.getElementById("wPivot"+as).addEventListener("input", (e) => {
+          p.pivot[as.toLowerCase()] = +e.target.value || 0;
+          plaatsPivotMarker(p.pivot);
+        });
+      });
+      document.getElementById("wPivotVolgende").addEventListener("click", () => {
+        p.fase = "as"; pickModus = "as"; toonWizardStap();
+      });
+    }
+    return;
+  }
+
+  if(p.fase === "as"){
+    const heeftAs = !!p.as;
+    el.innerHTML = `
+      <div class="wizard-step">
+        <b>Stap 2 — asrichting</b><br>
+        Klik een tweede punt om de richting van de as vanaf het draaipunt aan te wijzen
+        (bijna-rechte hoeken met X/Y/Z worden automatisch afgerond), of gebruik de sneltoetsen.
+        <div class="wizard-row">
+          <button class="btn mini-btn" data-as="1,0,0">+X</button>
+          <button class="btn mini-btn" data-as="-1,0,0">−X</button>
+          <button class="btn mini-btn" data-as="0,1,0">+Y</button>
+          <button class="btn mini-btn" data-as="0,-1,0">−Y</button>
+          <button class="btn mini-btn" data-as="0,0,1">+Z</button>
+          <button class="btn mini-btn" data-as="0,0,-1">−Z</button>
+        </div>
+        ${heeftAs ? `
+        <div class="wizard-row">
+          <label>X <input type="number" id="wAsX" class="num-small" step="0.05" value="${p.as.x.toFixed(3)}"></label>
+          <label>Y <input type="number" id="wAsY" class="num-small" step="0.05" value="${p.as.y.toFixed(3)}"></label>
+          <label>Z <input type="number" id="wAsZ" class="num-small" step="0.05" value="${p.as.z.toFixed(3)}"></label>
+        </div>` : ""}
+        <div class="wizard-row">
+          <button class="btn" id="wAnnuleer">Annuleren</button>
+          <button class="btn" id="wAsTerug">Terug naar draaipunt</button>
+          ${heeftAs ? '<button class="btn primary" id="wAsVolgende">Volgende — type en grenzen</button>' : ""}
+        </div>
+      </div>`;
+    document.getElementById("wAnnuleer").addEventListener("click", annuleerWizard);
+    document.getElementById("wAsTerug").addEventListener("click", () => {
+      p.fase = "pivot"; pickModus = "pivot";
+      if(asMarker){ scene.remove(asMarker); asMarker = null; }
+      p.as = null;
+      toonWizardStap();
+    });
+    document.querySelectorAll("[data-as]").forEach(b => b.addEventListener("click", () => {
+      const [x,y,z] = b.dataset.as.split(",").map(Number);
+      p.as = new THREE.Vector3(x,y,z);
+      plaatsAsMarker(p.pivot, p.as);
+      toonWizardStap();
+    }));
+    if(heeftAs){
+      ["X","Y","Z"].forEach(as => {
+        document.getElementById("wAs"+as).addEventListener("input", () => {
+          const v = new THREE.Vector3(+document.getElementById("wAsX").value||0,
+                                       +document.getElementById("wAsY").value||0,
+                                       +document.getElementById("wAsZ").value||0);
+          if(v.length() < 1e-6) return;
+          v.normalize();
+          p.as = v;
+          plaatsAsMarker(p.pivot, p.as);
+        });
+      });
+      document.getElementById("wAsVolgende").addEventListener("click", () => {
+        p.fase = "type-limiet"; pickModus = null; toonWizardStap();
+      });
+    }
+    return;
+  }
+
+  if(p.fase === "type-limiet"){
+    const isBewerken = !!p.bewerktLinkId;
+    const startType = p.type || "revolute";
+    const startMin = p.min !== undefined ? p.min : -180;
+    const startMax = p.max !== undefined ? p.max : 180;
+    el.innerHTML = `
+      <div class="wizard-step">
+        <b>Stap 3 — type en grenzen</b>
+        <div class="wizard-row">
+          <label><input type="radio" name="wType" value="revolute" ${startType==="revolute"?"checked":""}> Scharnier (rotatie)</label>
+          <label><input type="radio" name="wType" value="prismatic" ${startType==="prismatic"?"checked":""}> Schuif (translatie)</label>
+        </div>
+        <div class="wizard-row" id="wLimietRow">
+          <label>Min <input type="number" id="wMin" class="num-small" value="${startMin}"></label>
+          <label>Max <input type="number" id="wMax" class="num-small" value="${startMax}"></label>
+          <span class="note" id="wEenheid">${startType==="revolute"?"graden":"mm"}</span>
+        </div>
+        <div class="wizard-row">
+          <button class="btn" id="wAnnuleer">Annuleren</button>
+          <button class="btn primary" id="wBevestig">${isBewerken ? "Draaipunt bijwerken" : "Ledemaat + draaipunt aanmaken"}</button>
+        </div>
+      </div>`;
+    document.getElementById("wAnnuleer").addEventListener("click", annuleerWizard);
+    document.querySelectorAll('input[name="wType"]').forEach(r => r.addEventListener("change", (e) => {
+      const isRev = e.target.value === "revolute";
+      document.getElementById("wMin").value = isRev ? -180 : 0;
+      document.getElementById("wMax").value = isRev ? 180 : 100;
+      document.getElementById("wEenheid").textContent = isRev ? "graden" : "mm";
+    }));
+    document.getElementById("wBevestig").addEventListener("click", () => {
+      const type = document.querySelector('input[name="wType"]:checked').value;
+      const min = +document.getElementById("wMin").value;
+      const max = +document.getElementById("wMax").value;
+      const jointData = { type, min, max, waarde:0, pivotWereld:p.pivot.toArray(), asWereld:p.as.toArray() };
+      if(isBewerken){
+        bijwerkenJoint(p, jointData);
+      } else {
+        const ouderLink = ledematen.find(l => l.id === p.ouderId);
+        finaliseerLedemaat(p, jointData, ouderLink);
+      }
+    });
+    return;
+  }
+}
+
+function annuleerWizard(){
+  pendingLink = null; pickModus = null;
+  if(pivotMarker){ scene.remove(pivotMarker); pivotMarker = null; } verwijderGizmo();
+  if(asMarker){ scene.remove(asMarker); asMarker = null; }
+  document.querySelectorAll(".meshcb:checked").forEach(cb => cb.checked = false);
+  werkGroepeerKnopBij();
+  toonWizardStap();
+}
+
+function snapAsRichting(v){
+  const assen = [
+    new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0),
+    new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1,0),
+    new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,-1),
+  ];
+  for(const a of assen){ if(v.dot(a) > 0.9986) return a.clone(); }
+  return v;
+}
+
+/* ------------------------------------------------------------
+   Sleepgizmo bij het draaipunt: drie gekleurde pijlen (X/Y/Z)
+   waarmee je het punt direct in de 3D-view kunt verschuiven —
+   handig voor punten die verscholen zitten in het model.
+   ------------------------------------------------------------ */
+let gizmoGroep = null;
+
+function bouwGizmoPijl(kleur, richting){
+  const lengte = modelMaxDim * 0.22, dikte = Math.max(modelMaxDim * 0.010, 0.0004);
+  const groep = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({color: kleur, depthTest:false, transparent:true, opacity:0.95});
+  const schacht = new THREE.Mesh(new THREE.CylinderGeometry(dikte, dikte, lengte*0.75, 10), mat);
+  schacht.position.y = lengte*0.375;
+  const kop = new THREE.Mesh(new THREE.ConeGeometry(dikte*2.8, lengte*0.28, 12), mat);
+  kop.position.y = lengte*0.75 + lengte*0.14;
+  const hitbox = new THREE.Mesh(
+    new THREE.CylinderGeometry(dikte*4.5, dikte*4.5, lengte, 8),
+    new THREE.MeshBasicMaterial({visible:false})
+  );
+  hitbox.position.y = lengte/2;
+  hitbox.userData.as = richting; hitbox.userData.isGizmoHit = true;
+  groep.add(schacht, kop, hitbox);
+  groep.renderOrder = 1000;
+  groep.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), richting);
+  return groep;
+}
+
+function plaatsGizmo(punt){
+  verwijderGizmo();
+  gizmoGroep = new THREE.Group();
+  gizmoGroep.position.copy(punt);
+  gizmoGroep.add(bouwGizmoPijl(0xff3355, new THREE.Vector3(1,0,0)));
+  gizmoGroep.add(bouwGizmoPijl(0x55dd55, new THREE.Vector3(0,1,0)));
+  gizmoGroep.add(bouwGizmoPijl(0x4499ff, new THREE.Vector3(0,0,1)));
+  scene.add(gizmoGroep);
+}
+function verwijderGizmo(){
+  if(gizmoGroep){ scene.remove(gizmoGroep); gizmoGroep = null; }
+}
+
+/* Verschuift het draaipunt langs één as, op basis van de dichtstbijzijnde
+   afstand tussen de camerastraal (onder de muis) en de aslijn — dezelfde
+   wiskunde als professionele 3D-gizmo's gebruiken voor het slepen langs
+   één enkele as. */
+function verschuifPivotLangsAs(clientX, clientY, as){
+  const rect = renderer.domElement.getBoundingClientRect();
+  const m = new THREE.Vector2(((clientX-rect.left)/rect.width)*2-1, -((clientY-rect.top)/rect.height)*2+1);
+  const rc = new THREE.Raycaster(); rc.setFromCamera(m, camera);
+
+  const basisPunt = pickModus === "tcp" ? pendingTcp.punt : pendingLink.pivot;
+  const p1 = rc.ray.origin, d1 = rc.ray.direction;
+  const p2 = basisPunt, d2 = as;
+  const w0 = new THREE.Vector3().subVectors(p1, p2);
+  const a = d1.dot(d1), bB = d1.dot(d2), c = d2.dot(d2), d = d1.dot(w0), eE = d2.dot(w0);
+  const denom = a*c - bB*bB;
+  if(Math.abs(denom) < 1e-9) return;
+  const s = (a*eE - bB*d) / denom;
+  const nieuwPunt = new THREE.Vector3().copy(p2).addScaledVector(d2, s);
+
+  basisPunt.copy(nieuwPunt);
+  plaatsPivotMarker(nieuwPunt);
+  const prefix = pickModus === "tcp" ? "tPunt" : "wPivot";
+  ["X","Y","Z"].forEach(k => {
+    const veld = document.getElementById(prefix+k);
+    if(veld) veld.value = nieuwPunt[k.toLowerCase()].toFixed(4);
+  });
+}
+
+
+function plaatsPivotMarker(punt){
+  if(pivotMarker) scene.remove(pivotMarker);
+  pivotMarker = new THREE.Mesh(
+    new THREE.SphereGeometry(modelMaxDim*0.014, 16, 12),
+    new THREE.MeshBasicMaterial({color:0xE6007E, depthTest:false, transparent:true})
+  );
+  pivotMarker.position.copy(punt);
+  pivotMarker.renderOrder = 999;
+  scene.add(pivotMarker);
+  plaatsGizmo(punt);
+}
+
+function plaatsAsMarker(pivot, richting){
+  if(asMarker) scene.remove(asMarker);
+  asMarker = new THREE.ArrowHelper(richting, pivot, modelMaxDim*0.28, 0xE6007E, modelMaxDim*0.055, modelMaxDim*0.032);
+  asMarker.line.material.depthTest = false;
+  asMarker.cone.material.depthTest = false;
+  asMarker.renderOrder = 999;
+  scene.add(asMarker);
+}
+
+function verwerkPickKlik(punt){
+  if(pickModus === "pivot"){
+    pendingLink.pivot = punt.clone();
+    plaatsPivotMarker(pendingLink.pivot);
+    toonWizardStap();
+  } else if(pickModus === "as"){
+    let richting = punt.clone().sub(pendingLink.pivot);
+    if(richting.length() < modelMaxDim*0.001){
+      log("Dat punt ligt te dicht bij het draaipunt — kies een duidelijk ander punt.", "warn");
+      return;
+    }
+    richting.normalize();
+    richting = snapAsRichting(richting);
+    pendingLink.as = richting;
+    plaatsAsMarker(pendingLink.pivot, richting);
+    toonWizardStap();
+  } else if(pickModus === "tcp"){
+    pendingTcp.punt = punt.clone();
+    plaatsPivotMarker(pendingTcp.punt);
+    toonTcpWizardStap();
+  }
+}
+
+/* ------------------------------------------------------------
+   TCP (Tool Center Point): een vast referentiepunt op een
+   ledemaat, bedoeld om aan te slepen in Vrije stand — net als
+   freedrive bij een echte robot, maar generiek voor elke keten.
+   ------------------------------------------------------------ */
+let pendingTcp = null;
+
+function startTcpWizard(linkId){
+  if(pendingLink){ log("Rond eerst de huidige draaipunt-wizard af of annuleer die.", "warn"); return; }
+  const link = ledematen.find(l => l.id === linkId);
+  if(!link) return;
+  pendingTcp = { linkId, punt: null };
+  pickModus = "tcp";
+  document.getElementById("tcpWizard").style.display = "";
+  toonTcpWizardStap();
+}
+
+function toonTcpWizardStap(){
+  const el = document.getElementById("tcpWizardBody");
+  if(!pendingTcp){ el.innerHTML = ""; document.getElementById("tcpWizard").style.display = "none"; return; }
+  const link = ledematen.find(l => l.id === pendingTcp.linkId);
+  const heeftPunt = !!pendingTcp.punt;
+  el.innerHTML = `
+    <div class="wizard-step">
+      <b>TCP voor "${link.naam}"</b><br>
+      Klik op het model de plek die het referentiepunt moet worden (bijv. de grijperpunt).
+      Sleep daarna de gekleurde pijlen of gebruik de velden om exact bij te stellen.
+      ${heeftPunt ? `
+      <div class="wizard-row">
+        <label>X <input type="number" id="tPuntX" class="num-small" step="0.1" value="${pendingTcp.punt.x.toFixed(4)}"></label>
+        <label>Y <input type="number" id="tPuntY" class="num-small" step="0.1" value="${pendingTcp.punt.y.toFixed(4)}"></label>
+        <label>Z <input type="number" id="tPuntZ" class="num-small" step="0.1" value="${pendingTcp.punt.z.toFixed(4)}"></label>
+      </div>` : ""}
+      <div class="wizard-row">
+        <button class="btn" id="tAnnuleer">Annuleren</button>
+        ${heeftPunt ? '<button class="btn primary" id="tBevestig">TCP vastleggen</button>' : ""}
+      </div>
+    </div>`;
+  document.getElementById("tAnnuleer").addEventListener("click", annuleerTcpWizard);
+  if(heeftPunt){
+    ["X","Y","Z"].forEach(as => {
+      document.getElementById("tPunt"+as).addEventListener("input", () => {
+        pendingTcp.punt[as.toLowerCase()] = +document.getElementById("tPunt"+as).value || 0;
+        plaatsPivotMarker(pendingTcp.punt);
+      });
+    });
+    document.getElementById("tBevestig").addEventListener("click", bevestigTcp);
+  }
+}
+
+function annuleerTcpWizard(){
+  pendingTcp = null; pickModus = null;
+  if(pivotMarker){ scene.remove(pivotMarker); pivotMarker = null; } verwijderGizmo();
+  toonTcpWizardStap();
+}
+
+function bevestigTcp(){
+  const link = ledematen.find(l => l.id === pendingTcp.linkId);
+  link.groep.updateMatrixWorld(true);
+  const lokaal = link.groep.worldToLocal(pendingTcp.punt.clone());
+  link.tcpLokaal = lokaal;
+
+  if(link.tcpMarker) link.groep.remove(link.tcpMarker);
+  const marker = new THREE.Group();
+  const bol = new THREE.Mesh(
+    new THREE.SphereGeometry(modelMaxDim*0.016, 14, 10),
+    new THREE.MeshBasicMaterial({color:0xFFD23F, depthTest:false, transparent:true})
+  );
+  marker.add(bol);
+  const assen = new THREE.AxesHelper(modelMaxDim*0.12);
+  assen.material.depthTest = false;
+  marker.add(assen);
+  marker.renderOrder = 998;
+  marker.position.copy(lokaal);
+  link.groep.add(marker);
+  link.tcpMarker = marker;
+  link.tcpBol = bol;
+
+  pendingTcp = null; pickModus = null;
+  if(pivotMarker){ scene.remove(pivotMarker); pivotMarker = null; } verwijderGizmo();
+  toonTcpWizardStap();
+  renderLedematenLijst();
+  log("TCP vastgelegd voor <b>" + link.naam + "</b>.", "ok");
+}
+
+/* ------------------------------------------------------------
+   Generieke inverse kinematica (DLS): lost een keten willekeurige
+   scharnier-/schuifgewrichten op zodat een gekozen punt op het
+   eindledemaat een doelpositie bereikt — werkt met elke boom die
+   je hier zelf opbouwt, niet gebonden aan een vaste robotvorm.
+   ------------------------------------------------------------ */
+function ketenTotBasis(link){
+  const keten = [];
+  let huidig = link;
+  while(huidig){ keten.unshift(huidig); huidig = ledematen.find(l => l.id === huidig.ouderId); }
+  return keten;
+}
+function klem(v, min, max){ return Math.max(min, Math.min(max, v)); }
+
+function inverteer3x3(m){
+  /* eerst normaliseren op de grootste absolute waarde, anders is de
+     "is dit singulier?"-check fout bij zowel piepkleine (meters/graden)
+     als heel grote matrices — de vaste drempel klopt dan niet meer.   */
+  let maxAbs = 0;
+  for(let k=0;k<9;k++) maxAbs = Math.max(maxAbs, Math.abs(m[k]));
+  if(maxAbs < 1e-300) return null;
+  const s = m.map(x => x/maxAbs);
+  const [a,b,c,d,e,f,g,h,i] = s;
+  const A =  (e*i - f*h), B = -(d*i - f*g), C =  (d*h - e*g);
+  const D = -(b*i - c*h), E =  (a*i - c*g), F = -(a*h - b*g);
+  const G =  (b*f - c*e), H = -(a*f - c*d), I =  (a*e - b*d);
+  const det = a*A + b*B + c*C;
+  if(Math.abs(det) < 1e-10) return null;
+  const invDet = 1/(det*maxAbs);
+  return [A*invDet, D*invDet, G*invDet, B*invDet, E*invDet, H*invDet, C*invDet, F*invDet, I*invDet];
+}
+function matVec3(m, v){
+  return new THREE.Vector3(m[0]*v.x+m[1]*v.y+m[2]*v.z, m[3]*v.x+m[4]*v.y+m[5]*v.z, m[6]*v.x+m[7]*v.y+m[8]*v.z);
+}
+
+function losOpIK(link, doelPositie, lokaalPunt, iteraties=25){
+  const keten = ketenTotBasis(link).filter(l => l.joint);
+  if(!keten.length) return false;
+  const eindWereld = () => { scene.updateMatrixWorld(true); return link.groep.localToWorld(lokaalPunt.clone()); };
+
+  for(let iter=0; iter<iteraties; iter++){
+    const huidigePos = eindWereld();
+    const fout = new THREE.Vector3().subVectors(doelPositie, huidigePos);
+    if(fout.length() < modelMaxDim*0.0015) return true;
+
+    const J = keten.map(l => {
+      const origineel = l.joint.waarde;
+      const basisStap = l.joint.type === "revolute" ? 1 : Math.max(modelMaxDim*5, 2);
+      /* voorwaarts proberen; zit het gewricht tegen zijn grens, dan terugvallen
+         op een stap de andere kant op — anders "verdwijnt" dat gewricht uit de
+         Jacobiaan zodra het een grens raakt en kan het nooit meer terug.       */
+      let geklemd = klem(origineel + basisStap, l.joint.min, l.joint.max);
+      let wStap = geklemd - origineel;
+      if(Math.abs(wStap) < 1e-9){
+        geklemd = klem(origineel - basisStap, l.joint.min, l.joint.max);
+        wStap = geklemd - origineel;
+      }
+      if(Math.abs(wStap) < 1e-9) return new THREE.Vector3();
+      l.joint.waarde = geklemd; pasJointToe(l);
+      const nieuwePos = eindWereld();
+      l.joint.waarde = origineel; pasJointToe(l);
+      return new THREE.Vector3().subVectors(nieuwePos, huidigePos).divideScalar(wStap);
+    });
+
+    let m = [0,0,0,0,0,0,0,0,0];
+    J.forEach(v => { const a=[v.x,v.y,v.z]; for(let r=0;r<3;r++) for(let c=0;c<3;c++) m[r*3+c]+=a[r]*a[c]; });
+    /* dempingsfactor moet meeschalen met de daadwerkelijke Jacobiaan-grootte —
+       een vaste waarde is fout bij zowel piepkleine als heel grote modellen */
+    const spoor = m[0] + m[4] + m[8];
+    const lambda2 = Math.max(spoor * 0.05, 1e-12);
+    m[0]+=lambda2; m[4]+=lambda2; m[8]+=lambda2;
+    const inv = inverteer3x3(m);
+    if(!inv) break;
+    const y = matVec3(inv, fout);
+    keten.forEach((l,idx) => {
+      let dq = J[idx].dot(y);
+      /* stap per iteratie begrenzen — voorkomt dat één te grote correctie een
+         gewricht in één klap tegen zijn limiet aan knalt (vooral bij het begin
+         van een sleepbeweging, als het doel nog ver weg is).                 */
+      const maxStap = l.joint.type === "revolute" ? 12 : Math.max(modelMaxDim*40, 10);
+      dq = Math.max(-maxStap, Math.min(maxStap, dq));
+      l.joint.waarde = klem(l.joint.waarde + dq, l.joint.min, l.joint.max);
+      pasJointToe(l);
+    });
+  }
+  return eindWereld().distanceTo(doelPositie) < modelMaxDim*0.01;
+}
+
+/* ============================================================
+   10. Ledemaat vastleggen: transformatieboom bouwen + meshes verhuizen
+   ============================================================ */
+function finaliseerLedemaat(p, jointData, ouderLink){
+  const id = "L" + (volgendLinkNr++);
+  const meshes = p.meshIndices.map(i => meshMeta[i].object3d);
+  const kleur = LINK_KLEUREN[(ledematen.length) % LINK_KLEUREN.length];
+
+  const ouderGroep = ouderLink ? ouderLink.groep : modelRoot;
+  ouderGroep.updateMatrixWorld(true);
+
+  let groep;
+  if(jointData){
+    groep = new THREE.Group();
+    groep.name = "joint-" + p.naam;
+    ouderGroep.add(groep);
+    const pivotWereld = new THREE.Vector3().fromArray(jointData.pivotWereld);
+    groep.position.copy(ouderGroep.worldToLocal(pivotWereld.clone()));
+    groep.updateMatrixWorld(true);
+
+    const ouderWereldQuat = new THREE.Quaternion();
+    ouderGroep.getWorldQuaternion(ouderWereldQuat);
+    const asWereld = new THREE.Vector3().fromArray(jointData.asWereld);
+    const lokaalAs = asWereld.clone().applyQuaternion(ouderWereldQuat.clone().invert()).normalize();
+
+    jointData.lokaalAs = lokaalAs;
+    jointData.pivotBasisPositie = groep.position.clone();
+  } else {
+    groep = new THREE.Group();
+    groep.name = "basis-" + p.naam;
+    modelRoot.add(groep);
+  }
+  meshes.forEach(m => groep.attach(m));
+
+  const link = {
+    id, naam: p.naam, meshIndices: p.meshIndices, ouderId: ouderLink ? ouderLink.id : null,
+    kleur, groep, meshes, joint: jointData || null,
+  };
+  ledematen.push(link);
+  p.meshIndices.forEach(i => { meshMeta[i].linkId = id; });
+
+  pendingLink = null; pickModus = null;
+  if(pivotMarker){ scene.remove(pivotMarker); pivotMarker = null; } verwijderGizmo();
+  if(asMarker){ scene.remove(asMarker); asMarker = null; }
+  document.querySelectorAll(".meshcb").forEach(cb => {
+    if(+cb.dataset.meshIndex === undefined) return;
+    if(p.meshIndices.includes(+cb.dataset.meshIndex)){ cb.checked = false; cb.disabled = true; }
+  });
+  toonWizardStap();
+  werkGroepeerKnopBij();
+  renderLedematenLijst();
+  renderKinBoom();
+  renderSimSliders();
+  log("Ledemaat <b>" + p.naam + "</b> aangemaakt" + (jointData ? " met " + (jointData.type==='revolute'?'scharnier':'schuif') + "." : " (basis)."), "ok");
+}
+
+function verwijderLedemaat(id){
+  const link = ledematen.find(l => l.id === id);
+  if(!link) return;
+  const heeftKinderen = ledematen.some(l => l.ouderId === id);
+  if(heeftKinderen){
+    log("Kan '" + link.naam + "' niet verwijderen: er hangen nog ledematen onder — verwijder die eerst.", "warn");
+    return;
+  }
+  if(!confirm("Ledemaat '" + link.naam + "' verwijderen? De onderdelen komen terug los in de boom te staan.")) return;
+
+  const ouder = ledematen.find(l => l.id === link.ouderId);
+  const doelGroep = ouder ? ouder.groep : modelRoot;
+  link.meshes.forEach(m => doelGroep.attach(m));
+  if(link.groep.parent) link.groep.parent.remove(link.groep);
+
+  link.meshIndices.forEach(i => {
+    if(meshMeta[i]) delete meshMeta[i].linkId;
+    const cb = document.querySelector('.meshcb[data-mesh-index="' + i + '"]');
+    if(cb) cb.disabled = false;
+  });
+
+  ledematen = ledematen.filter(l => l.id !== id);
+  if(geselecteerdLedemaat === id){ geselecteerdLedemaat = null; highlightMeshes([]); }
+  renderLedematenLijst(); renderKinBoom(); renderSimSliders(); werkGroepeerKnopBij();
+  log("Ledemaat '" + link.naam + "' verwijderd.", "ok");
+}
+
+function renderLedematenLijst(){
+  document.getElementById("ledematenSection").style.display = "";
+  document.getElementById("groepeerHint").style.display = ledematen.length ? "none" : "";
+  const el = document.getElementById("ledematenLijst");
+  el.innerHTML = "";
+  ledematen.forEach(link => {
+    const row = document.createElement("div");
+    row.className = "link-row" + (geselecteerdLedemaat === link.id ? " selected" : "");
+    row.innerHTML =
+      '<span class="dot" style="background:' + link.kleur + '"></span>' +
+      '<span class="naam">' + link.naam + '</span>' +
+      '<span class="sub">' + link.meshIndices.length + (link.joint ? "" : " · basis") + (link.tcpLokaal ? " · TCP" : "") + "</span>" +
+      (link.joint ? '<button class="mini-btn" data-bewerk="' + link.id + '" title="Draaipunt bewerken">✎</button>' : "") +
+      '<button class="mini-btn" data-tcp="' + link.id + '" title="TCP plaatsen">' + (link.tcpLokaal ? "TCP ✓" : "+ TCP") + '</button>' +
+      '<button class="mini-btn" data-del="' + link.id + '" title="Verwijderen">×</button>';
+    if(link.joint){
+      row.querySelector("[data-bewerk]").addEventListener("click", (e) => {
+        e.stopPropagation();
+        bewerkJoint(link.id);
+      });
+    }
+    row.querySelector("[data-tcp]").addEventListener("click", (e) => {
+      e.stopPropagation();
+      startTcpWizard(link.id);
+    });
+    row.querySelector("[data-del]").addEventListener("click", (e) => {
+      e.stopPropagation();
+      verwijderLedemaat(link.id);
+    });
+    row.addEventListener("click", () => {
+      geselecteerdLedemaat = geselecteerdLedemaat === link.id ? null : link.id;
+      highlightMeshes(geselecteerdLedemaat ? link.meshes : []);
+      renderLedematenLijst();
+    });
+    el.appendChild(row);
+  });
+}
+
+/* ============================================================
+   11. Kinematische boom + simulatie-sliders
+   ============================================================ */
+function renderKinBoom(){
+  document.getElementById("kinematischeBoomSection").style.display = ledematen.length ? "" : "none";
+  const el = document.getElementById("kinBoom");
+  function regel(link, diepte){
+    const kids = ledematen.filter(l => l.ouderId === link.id);
+    let html = '<div class="kin-item" style="padding-left:' + (diepte*14) + 'px">' + link.naam +
+      (link.joint ? '<span class="tag">' + (link.joint.type === "revolute" ? "scharnier" : "schuif") + '</span>' : '<span class="tag">basis</span>') +
+      "</div>";
+    kids.forEach(k => html += regel(k, diepte+1));
+    return html;
+  }
+  const bases = ledematen.filter(l => !l.ouderId);
+  el.innerHTML = bases.map(b => regel(b,0)).join("") || '<span class="empty">Nog geen ledematen.</span>';
+}
+
+function pasJointToe(link){
+  if(!link.joint) return;
+  if(link.joint.type === "revolute"){
+    link.groep.quaternion.setFromAxisAngle(link.joint.lokaalAs, link.joint.waarde * Math.PI/180);
+  } else {
+    link.groep.position.copy(link.joint.pivotBasisPositie)
+      .addScaledVector(link.joint.lokaalAs, link.joint.waarde/1000);
+  }
+}
+
+function renderSimSliders(){
+  const joints = ledematen.filter(l => l.joint);
+  document.getElementById("simulatieSection").style.display = joints.length ? "" : "none";
+  const el = document.getElementById("simSliders");
+  el.innerHTML = "";
+  joints.forEach(link => {
+    const eenheid = link.joint.type === "revolute" ? "°" : " mm";
+    const row = document.createElement("div");
+    row.className = "slider-row";
+    row.innerHTML =
+      '<div class="lbl"><b>' + link.naam + '</b><span id="simVal-' + link.id + '">' + link.joint.waarde.toFixed(1) + eenheid + '</span></div>' +
+      '<input type="range" id="simSlider-' + link.id + '" min="' + link.joint.min + '" max="' + link.joint.max + '" step="0.5" value="' + link.joint.waarde + '">';
+    row.querySelector("input").addEventListener("input", (e) => {
+      link.joint.waarde = +e.target.value;
+      document.getElementById("simVal-" + link.id).textContent = link.joint.waarde.toFixed(1) + eenheid;
+      pasJointToe(link);
+    });
+    el.appendChild(row);
+  });
+  renderProgrammaLijst();
+}
+
+function verversSliderUI(link){
+  const eenheid = link.joint.type === "revolute" ? "°" : " mm";
+  const slider = document.getElementById("simSlider-" + link.id);
+  const label = document.getElementById("simVal-" + link.id);
+  if(slider) slider.value = link.joint.waarde;
+  if(label) label.textContent = link.joint.waarde.toFixed(1) + eenheid;
+}
+
+/* ============================================================
+   12. Rig opslaan / laden
+   ============================================================ */
+document.getElementById("btnRigOpslaan").addEventListener("click", () => {
+  const data = {
+    type: "twin-builder-rig", versie: 2, bestand: huidigeBestandsnaam,
+    ledematen: ledematen.map(l => ({
+      id: l.id, naam: l.naam, ouderId: l.ouderId, meshIndices: l.meshIndices, kleur: l.kleur,
+      joint: l.joint ? { type:l.joint.type, min:l.joint.min, max:l.joint.max,
+                          pivotWereld:l.joint.pivotWereld, asWereld:l.joint.asWereld } : null,
+      tcpLokaal: l.tcpLokaal ? l.tcpLokaal.toArray() : null,
+    })),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 1)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (huidigeBestandsnaam || "rig").replace(/\.[^.]+$/,"") + "-rig.json";
+  a.click();
+  log("Rig opgeslagen als " + a.download + ".", "ok");
+});
+
+document.getElementById("btnRigLaden").addEventListener("click", () => document.getElementById("rigInput").click());
+document.getElementById("rigInput").addEventListener("change", async () => {
+  const file = document.getElementById("rigInput").files[0];
+  if(!file) return;
+  try{
+    const data = JSON.parse(await file.text());
+    if(data.type !== "twin-builder-rig") throw new Error("dit is geen rig-bestand van Digital Twin Builder");
+    const maxIdx = meshMeta.length - 1;
+    const buitenBereik = data.ledematen.some(l => l.meshIndices.some(i => i > maxIdx));
+    if(buitenBereik) throw new Error("dit rig-bestand hoort niet bij het geladen model (verkeerd of gewijzigd STEP-bestand?)");
+
+    // reset huidige ledematen
+    ledematen = []; volgendLinkNr = 1; geselecteerdLedemaat = null;
+    meshMeta.forEach(m => { if(m) delete m.linkId; });
+    document.querySelectorAll(".meshcb").forEach(cb => cb.disabled = false);
+
+    // opnieuw opbouwen, ouders eerst
+    const volgorde = [];
+    const bezocht = new Set();
+    function voegToe(l){
+      if(bezocht.has(l.id)) return;
+      if(l.ouderId){ const o = data.ledematen.find(x=>x.id===l.ouderId); if(o) voegToe(o); }
+      bezocht.add(l.id); volgorde.push(l);
+    }
+    data.ledematen.forEach(voegToe);
+
+    volgorde.forEach(ld => {
+      const ouderLink = ledematen.find(l => l.id === ld.ouderId) || null;
+      const p = { naam: ld.naam, meshIndices: ld.meshIndices };
+      const jointData = ld.joint ? Object.assign({waarde:0}, ld.joint) : null;
+      finaliseerLedemaatStil(p, jointData, ouderLink, ld.id, ld.kleur, ld.tcpLokaal);
+    });
+    renderLedematenLijst(); renderKinBoom(); renderSimSliders();
+    log("Rig geladen: " + data.ledematen.length + " ledematen.", "ok");
+  } catch(err){
+    log("Rig laden mislukt: " + err.message, "err");
+  } finally {
+    document.getElementById("rigInput").value = "";
+  }
+});
+
+/* ============================================================
+   13. Component naar een sessie sturen (session-server.js)
+   ============================================================
+   Bouwt van het nu geladen model + zijn gewrichten een "component"
+   volgens het sessie-JSON-formaat (zie voorbeeld-sessie.json) en
+   PUT't die in een bestaande of nieuwe sessie op de session-server.
+
+   Alleen ledematen MET een gewricht worden meegestuurd (net als in
+   het voorbeeld) — het stilstaande deel van het model (bijv. de
+   cilinderbuis) hoort gewoon bij het statische STEP-bestand zelf.
+   Elk meegestuurd ledemaat krijgt een "onderdelen"-lijst: de originele
+   naam/namen van de STEP-body/bodies die bij dat ledemaat horen (zodat
+   een AR-viewer later weet welke mesh(es) uit het bestand hij apart
+   moet kunnen bewegen).
+
+   Let op: het STEP-bestand zelf wordt hier NIET geüpload — de
+   session-server bewaart alleen de sessie-JSON. Het bestand moet apart
+   naast de AR-viewer/simulator terechtkomen; de "bestand"-naam hieronder
+   is dus een afspraak, geen automatische koppeling.                   */
+let sessieServerKlaar = false;
+let sessieLijstCache = [];
+
+function sessieServerBasis(){ return document.getElementById("sessieServerUrl").value.trim().replace(/\/+$/, ""); }
+
+async function sessieVerzoek(pad, opties){
+  const basis = sessieServerBasis();
+  if(!basis) throw new Error("vul het adres van de session-server in");
+  const res = await fetch(basis + pad, opties);
+  let json = null;
+  try { json = await res.json(); } catch { /* leeg antwoord, bijv. bij DELETE */ }
+  if(!res.ok) throw new Error((json && json.fout) ? json.fout : ("session-server antwoordde met " + res.status));
+  return json;
+}
+
+async function laadSessieLijst(){
+  const lijst = await sessieVerzoek("/sessies");
+  sessieLijstCache = lijst;
+  const select = document.getElementById("sessieKeuze");
+  select.innerHTML = lijst.map(s => `<option value="${s.id}">${s.naam || s.id}</option>`).join("")
+    + `<option value="__nieuw__">+ Nieuwe sessie …</option>`;
+  select.value = lijst.length ? lijst[0].id : "__nieuw__";
+  document.getElementById("sessieNieuweNaamRow").style.display = select.value === "__nieuw__" ? "" : "none";
+}
+
+document.getElementById("sessieKeuze").addEventListener("change", (e) => {
+  document.getElementById("sessieNieuweNaamRow").style.display = e.target.value === "__nieuw__" ? "" : "none";
+});
+
+document.getElementById("btnSessieVerbind").addEventListener("click", async () => {
+  const statusEl = document.getElementById("sessieVerbindStatus");
+  statusEl.textContent = "Verbinden …";
+  try{
+    await laadSessieLijst();
+    sessieServerKlaar = true;
+    statusEl.textContent = "Verbonden — " + sessieLijstCache.length + " bestaande sessie(s) gevonden.";
+    document.getElementById("sessieFormulier").style.display = "";
+  } catch(err){
+    sessieServerKlaar = false;
+    document.getElementById("sessieFormulier").style.display = "none";
+    statusEl.innerHTML = `<span style="color:var(--err)">Kon niet verbinden: ${err.message}. Draait session-server.js (npm run, of "node session-server.js")?</span>`;
+  }
+});
+
+/* Maakt van een naam een veilige sessie/component-id — zelfde idee als
+   de sessie-server zelf gebruikt (alleen letters/cijfers/- en _).      */
+function naarId(naam){
+  return (naam || "onderdeel").trim().toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "onderdeel";
+}
+
+document.getElementById("btnComponentToevoegen").addEventListener("click", async () => {
+  if(!sessieServerKlaar){ log("Verbind eerst met de session-server.", "warn"); return; }
+  const btn = document.getElementById("btnComponentToevoegen");
+  const compNaam = document.getElementById("compNaam").value.trim() || huidigeBestandsnaam.replace(/\.[^.]+$/, "") || "Onderdeel";
+  const bestand = document.getElementById("compBestand").value.trim() || huidigeBestandsnaam;
+  const positie = {
+    x: +document.getElementById("compPosX").value || 0,
+    y: +document.getElementById("compPosY").value || 0,
+    z: +document.getElementById("compPosZ").value || 0,
+  };
+  const rotatieGraden = {
+    x: +document.getElementById("compRotX").value || 0,
+    y: +document.getElementById("compRotY").value || 0,
+    z: +document.getElementById("compRotZ").value || 0,
+  };
+
+  const gewrichtLedematen = ledematen.filter(l => l.joint).map(l => ({
+    id: l.id,
+    naam: l.naam,
+    ouder: l.ouderId,   // null = direct op de component zelf (geen tussenliggend ledemaat)
+    onderdelen: [...new Set(l.meshIndices.map(i => (meshMeta[i].name || "").replace(/\s*\(\d+\)$/, "").trim()).filter(Boolean))],
+    gewricht: {
+      type: l.joint.type,
+      as: { x: l.joint.asWereld[0], y: l.joint.asWereld[1], z: l.joint.asWereld[2] },
+      pivot: { x: l.joint.pivotWereld[0], y: l.joint.pivotWereld[1], z: l.joint.pivotWereld[2] },
+      min: l.joint.min, max: l.joint.max,
+      eenheid: l.joint.type === "revolute" ? "graden" : "mm",
+      waarde: l.joint.waarde,
+    },
+  }));
+
+  const component = {
+    id: naarId(compNaam),
+    naam: compNaam,
+    soort: "onderdeel",
+    model: { type: "step", bestand },
+    positie, rotatieGraden,
+    ledematen: gewrichtLedematen,
+  };
+
+  const select = document.getElementById("sessieKeuze");
+  const isNieuw = select.value === "__nieuw__";
+  const sessieId = isNieuw ? naarId(document.getElementById("sessieNieuweNaam").value) : select.value;
+  if(isNieuw && !document.getElementById("sessieNieuweNaam").value.trim()){
+    log("Geef de nieuwe sessie een naam.", "warn"); return;
+  }
+
+  btn.disabled = true; btn.textContent = "Bezig …";
+  try{
+    let sessie;
+    if(isNieuw){
+      sessie = { versie: 1, naam: document.getElementById("sessieNieuweNaam").value.trim(), bronnen: [], componenten: [] };
+    } else {
+      sessie = await sessieVerzoek("/sessies/" + encodeURIComponent(sessieId));
+    }
+    const bestaandeIdx = sessie.componenten.findIndex(c => c.id === component.id);
+    if(bestaandeIdx >= 0){
+      sessie.componenten[bestaandeIdx] = component;
+      log(`Component "${compNaam}" vervangt de gelijknamige component in sessie "${sessie.naam}".`, "warn");
+    } else {
+      sessie.componenten.push(component);
+    }
+    await sessieVerzoek("/sessies/" + encodeURIComponent(sessieId), {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sessie),
+    });
+    log(`Component "${compNaam}" (${gewrichtLedematen.length} gewricht(en)) toegevoegd aan sessie "${sessie.naam}".`, "ok");
+    document.getElementById("sessieBestandHint").innerHTML =
+      `Vergeet niet: zet <b>${bestand}</b> ook echt naast de AR-viewer/simulator — alleen de sessie-​gegevens staan nu op de server, niet het STEP-bestand zelf.`;
+    await laadSessieLijst();
+    select.value = sessieId;
+    document.getElementById("sessieNieuweNaamRow").style.display = "none";
+  } catch(err){
+    log("Component toevoegen aan sessie mislukt: " + err.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "+ Component toevoegen aan sessie";
+  }
+});
+
+/* zelfde als finaliseerLedemaat maar zonder wizard-state (voor het laden van een rig) */
+function finaliseerLedemaatStil(p, jointData, ouderLink, gewenstId, kleur, tcpLokaalArr){
+  const meshes = p.meshIndices.map(i => meshMeta[i].object3d);
+  const ouderGroep = ouderLink ? ouderLink.groep : modelRoot;
+  ouderGroep.updateMatrixWorld(true);
+
+  let groep;
+  if(jointData){
+    groep = new THREE.Group();
+    ouderGroep.add(groep);
+    const pivotWereld = new THREE.Vector3().fromArray(jointData.pivotWereld);
+    groep.position.copy(ouderGroep.worldToLocal(pivotWereld.clone()));
+    groep.updateMatrixWorld(true);
+    const ouderWereldQuat = new THREE.Quaternion();
+    ouderGroep.getWorldQuaternion(ouderWereldQuat);
+    const asWereld = new THREE.Vector3().fromArray(jointData.asWereld);
+    jointData.lokaalAs = asWereld.clone().applyQuaternion(ouderWereldQuat.clone().invert()).normalize();
+    jointData.pivotBasisPositie = groep.position.clone();
+  } else {
+    groep = new THREE.Group();
+    modelRoot.add(groep);
+  }
+  meshes.forEach(m => groep.attach(m));
+
+  const link = { id: gewenstId, naam: p.naam, meshIndices: p.meshIndices,
+                 ouderId: ouderLink ? ouderLink.id : null, kleur, groep, meshes, joint: jointData || null };
+
+  if(tcpLokaalArr){
+    const lokaal = new THREE.Vector3().fromArray(tcpLokaalArr);
+    link.tcpLokaal = lokaal;
+    const marker = new THREE.Group();
+    const bol = new THREE.Mesh(
+      new THREE.SphereGeometry(modelMaxDim*0.016, 14, 10),
+      new THREE.MeshBasicMaterial({color:0xFFD23F, depthTest:false, transparent:true})
+    );
+    marker.add(bol);
+    const assen = new THREE.AxesHelper(modelMaxDim*0.12);
+    assen.material.depthTest = false;
+    marker.add(assen);
+    marker.renderOrder = 998;
+    marker.position.copy(lokaal);
+    groep.add(marker);
+    link.tcpMarker = marker;
+    link.tcpBol = bol;
+  }
+
+  ledematen.push(link);
+  volgendLinkNr = Math.max(volgendLinkNr, parseInt(gewenstId.slice(1)||"0",10) + 1);
+  p.meshIndices.forEach(i => { meshMeta[i].linkId = gewenstId; document.querySelector('.meshcb[data-mesh-index="'+i+'"]')?.setAttribute("disabled","");});
+}
+
+/* ============================================================
+   13. Programma: poses vastleggen, afspelen met vloeiende overgangen
+   ============================================================ */
+let programma = [];              // {naam, waarden: {linkId: waarde}}
+let programmaLoopt = false;
+let programmaToken = 0;
+
+function pasPoseToe(waarden){
+  ledematen.forEach(l => {
+    if(!l.joint || !(l.id in waarden)) return;
+    l.joint.waarde = waarden[l.id];
+    pasJointToe(l);
+    verversSliderUI(l);
+  });
+}
+
+function renderProgrammaLijst(){
+  const joints = ledematen.filter(l => l.joint);
+  document.getElementById("programmaSection").style.display = joints.length ? "" : "none";
+  const el = document.getElementById("progLijst");
+  if(!programma.length){ el.innerHTML = '<span class="note">Nog geen stappen — zet de sliders in een pose en klik "+ Huidige pose vastleggen".</span>'; return; }
+  el.innerHTML = "";
+  programma.forEach((stap, i) => {
+    const row = document.createElement("div");
+    row.className = "link-row";
+    row.innerHTML =
+      '<span class="naam">' + (i+1) + ". " + stap.naam + '</span>' +
+      '<button class="mini-btn" data-ga="' + i + '">Ga naartoe</button>' +
+      '<button class="mini-btn" data-delstap="' + i + '">×</button>';
+    row.querySelector("[data-ga]").addEventListener("click", () => pasPoseToe(programma[i].waarden));
+    row.querySelector("[data-delstap]").addEventListener("click", (e) => {
+      e.stopPropagation();
+      programma.splice(i, 1);
+      renderProgrammaLijst();
+    });
+    el.appendChild(row);
+  });
+}
+
+document.getElementById("btnPoseVastleggen").addEventListener("click", () => {
+  const waarden = {};
+  ledematen.forEach(l => { if(l.joint) waarden[l.id] = l.joint.waarde; });
+  if(!Object.keys(waarden).length){ log("Nog geen draaipunten om vast te leggen.", "warn"); return; }
+  programma.push({ naam: "Stap " + (programma.length + 1), waarden });
+  renderProgrammaLijst();
+  log("Pose vastgelegd als stap " + programma.length + ".", "ok");
+});
+
+function tweenNaarPose(doelWaarden, duurMs, mijnToken){
+  return new Promise(resolve => {
+    const start = {};
+    ledematen.forEach(l => { if(l.joint) start[l.id] = l.joint.waarde; });
+    const t0 = performance.now();
+    function stap(now){
+      if(programmaToken !== mijnToken){ resolve(); return; }
+      const t = Math.min(1, (now - t0) / duurMs);
+      ledematen.forEach(l => {
+        if(!l.joint || !(l.id in doelWaarden)) return;
+        const van = start[l.id], naar = doelWaarden[l.id];
+        l.joint.waarde = van + (naar - van) * t;
+        pasJointToe(l);
+        verversSliderUI(l);
+      });
+      if(t < 1) requestAnimationFrame(stap); else resolve();
+    }
+    requestAnimationFrame(stap);
+  });
+}
+
+document.getElementById("btnProgAfspelen").addEventListener("click", async () => {
+  if(programma.length < 1){ log("Geen stappen om af te spelen — leg eerst een pose vast.", "warn"); return; }
+  const mijnToken = ++programmaToken;
+  programmaLoopt = true;
+  document.getElementById("btnProgAfspelen").disabled = true;
+  document.getElementById("btnProgStop").disabled = false;
+  log("Programma gestart (" + programma.length + " stappen).", "ok");
+  const duurBasis = 1800;
+  do {
+    for(let i = 0; i < programma.length; i++){
+      if(programmaToken !== mijnToken) break;
+      const snelheid = +document.getElementById("progSnelheid").value;
+      await tweenNaarPose(programma[i].waarden, duurBasis * (100/snelheid), mijnToken);
+    }
+  } while(programmaToken === mijnToken && document.getElementById("progHerhalen").checked);
+  if(programmaToken === mijnToken){
+    programmaLoopt = false;
+    document.getElementById("btnProgAfspelen").disabled = false;
+    document.getElementById("btnProgStop").disabled = true;
+    log("Programma voltooid.", "ok");
+  }
+});
+document.getElementById("btnProgStop").addEventListener("click", () => {
+  programmaToken++;
+  programmaLoopt = false;
+  document.getElementById("btnProgAfspelen").disabled = false;
+  document.getElementById("btnProgStop").disabled = true;
+  log("Programma gestopt.", "warn");
+});
+
+document.getElementById("btnProgOpslaan").addEventListener("click", () => {
+  if(!programma.length){ log("Nog geen stappen om op te slaan.", "warn"); return; }
+  const data = { type:"twin-builder-programma", versie:1, bestand:huidigeBestandsnaam, stappen:programma };
+  const blob = new Blob([JSON.stringify(data, null, 1)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (huidigeBestandsnaam || "programma").replace(/\.[^.]+$/, "") + "-programma.json";
+  a.click();
+  log("Programma opgeslagen als " + a.download + ".", "ok");
+});
+document.getElementById("btnProgLaden").addEventListener("click", () => document.getElementById("progInput").click());
+document.getElementById("progInput").addEventListener("change", async () => {
+  const file = document.getElementById("progInput").files[0];
+  if(!file) return;
+  try{
+    const data = JSON.parse(await file.text());
+    if(data.type !== "twin-builder-programma") throw new Error("dit is geen programmabestand van Digital Twin Builder");
+    const geldigeIds = new Set(ledematen.filter(l => l.joint).map(l => l.id));
+    const heeftGeldige = data.stappen.some(s => Object.keys(s.waarden).some(id => geldigeIds.has(id)));
+    if(!heeftGeldige) throw new Error("dit programma hoort niet bij de huidige rig (geen enkel draaipunt-ID komt overeen)");
+    programma = data.stappen;
+    renderProgrammaLijst();
+    log("Programma geladen: " + programma.length + " stappen.", "ok");
+  } catch(err){
+    log("Programma laden mislukt: " + err.message, "err");
+  } finally {
+    document.getElementById("progInput").value = "";
+  }
+});
+</script>
+</body>
+</html>
